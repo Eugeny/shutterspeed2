@@ -6,29 +6,30 @@ use panic_halt as _;
 mod display;
 mod ui;
 mod util;
-use display::Display;
 
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [])]
 mod app {
+    use core::num::Wrapping;
+
+    use hal::adc::config::{AdcConfig, Dma, Resolution, SampleTime, Scan, Sequence, Clock};
+    use hal::adc::Adc;
+    use hal::dma::config::DmaConfig;
+    use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
+    use hal::gpio::Speed;
+    use hal::pac::{self, ADC1, DMA2, SPI1, TIM2};
+    use hal::prelude::*;
     use hal::spi::Spi;
+    use hal::timer::{CounterHz, Event, Flag};
+    use heapless::HistoryBuffer;
     use rtic_monotonics::create_systick_token;
     use rtic_monotonics::systick::Systick;
     use stm32f4xx_hal as hal;
-    use stm32f4xx_hal::adc::config::{
-        AdcConfig, Clock, Dma, Resolution, SampleTime, Scan, Sequence,
-    };
-    use stm32f4xx_hal::adc::Adc;
-    use stm32f4xx_hal::dma::config::DmaConfig;
-    use stm32f4xx_hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
-    use stm32f4xx_hal::gpio::Speed;
-    use stm32f4xx_hal::pac::{self, ADC1, DMA2, SPI1, TIM2};
-    use stm32f4xx_hal::prelude::*;
-    use stm32f4xx_hal::timer::{CounterHz, Event, Flag};
 
-    use crate::ui::{draw_ui, UiState};
+    use crate::display::Display;
+    use crate::ui::{draw_ui, init_ui, UiState};
 
     const DISPLAY_BRIGHTNESS: f32 = 0.1;
-    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_112;
+    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_480;
 
     type DMATransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
 
@@ -36,13 +37,15 @@ mod app {
     struct Shared {
         transfer: DMATransfer,
         adc_value: u16,
+        sample_counter: Wrapping<u32>,
     }
 
     #[local]
     struct Local {
         buffer: Option<&'static mut u16>,
         timer: CounterHz<TIM2>,
-        display: crate::Display<Spi<SPI1>>,
+        display: Display<Spi<SPI1>>,
+        adc_history: HistoryBuffer<u16, 320>,
     }
 
     #[init(local = [first_buffer: u16 = 0, second_buffer: u16 = 0])]
@@ -64,8 +67,10 @@ mod app {
         let clocks = rcc
             .cfgr
             .hclk(84.MHz())
-            // .use_hse(25.MHz())
+            .use_hse(25.MHz())
             .sysclk(48.MHz())
+            .require_pll48clk()
+            .pclk2(10.MHz())
             .freeze();
 
         let gpioa = dp.GPIOA.split();
@@ -79,17 +84,17 @@ mod app {
         let systick_token = create_systick_token!();
         Systick::start(cx.core.SYST, 12_000_000, systick_token);
 
-        let mic1 = gpioa.pa0.into_analog();
+        let adc_pin = gpioa.pa0.into_analog();
         // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
         // Configure ADC for sequence conversion with interrtups
         let adc_config = AdcConfig::default()
             .dma(Dma::Continuous)
-            .scan(Scan::Enabled)
-            .resolution(Resolution::Twelve)
-            .clock(Clock::Pclk2_div_8);
+            .scan(Scan::Disabled)
+            .clock(Clock::Pclk2_div_2)
+            .resolution(Resolution::Ten);
 
         let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
-        adc.configure_channel(&mic1, Sequence::One, SampleTime::Cycles_480);
+        adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
 
         // DMA Configuration
         let dma = StreamsTuple::new(dp.DMA2);
@@ -108,7 +113,7 @@ mod app {
 
         let mut timer = dp.TIM2.counter_hz(&clocks);
         timer.listen(Event::Update);
-        timer.start(1000.Hz()).unwrap();
+        timer.start(100.kHz()).unwrap();
 
         //----
 
@@ -120,7 +125,7 @@ mod app {
 
         let display = {
             let mut dc_pin = gpioa.pa8.into_push_pull_output();
-            let mut rst_pin = gpioa.pa10.into_push_pull_output();
+            let mut rst_pin = gpioa.pa11.into_push_pull_output();
             let mut sclk_pin = gpioa.pa5.into_alternate();
             let mut miso_pin = gpioa.pa6.into_alternate();
             let mut mosi_pin = gpioa.pa7.into_alternate();
@@ -133,10 +138,10 @@ mod app {
                 dp.SPI1,
                 (sclk_pin, miso_pin, mosi_pin),
                 embedded_hal::spi::MODE_3,
-                2.MHz(),
+                5.MHz(),
                 &clocks,
             );
-            let mut display = super::Display::new(spi, dc_pin.erase(), rst_pin.erase(), &mut delay);
+            let mut display = Display::new(spi, dc_pin.erase(), rst_pin.erase(), &mut delay);
             display.clear();
             display
         };
@@ -152,11 +157,13 @@ mod app {
             Shared {
                 transfer,
                 adc_value: 0,
+                sample_counter: Wrapping(0),
             },
             Local {
                 buffer: Some(cx.local.second_buffer),
                 timer,
                 display,
+                adc_history: HistoryBuffer::new(),
             },
         )
     }
@@ -171,12 +178,8 @@ mod app {
         cx.local.timer.clear_flags(Flag::Update);
     }
 
-    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value], local = [buffer])]
-    fn dma(mut ctx: dma::Context) {
-        // Destructure dma::Context to make only the shared resources mutable
-        //let dma::Context { mut shared, local } = cx;
-
-        // Also Equivalent to
+    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter], local = [buffer])]
+    fn dma(ctx: dma::Context) {
         let mut shared = ctx.shared;
         let local = ctx.local;
 
@@ -192,19 +195,42 @@ mod app {
         shared.adc_value.lock(|adc_value| {
             *adc_value = mic1;
         });
+        shared.sample_counter.lock(|sample_counter| {
+            *sample_counter += Wrapping(1);
+        });
 
         // Return buffer to resources pool for next transfer
         *local.buffer = Some(buffer);
     }
 
-    #[task(local=[display], shared=[adc_value])]
+    #[task(local=[display, adc_history], shared=[adc_value, sample_counter])]
     async fn display_task(mut ctx: display_task::Context) {
         let local = ctx.local;
-        loop {
-            let adc_value = ctx.shared.adc_value.lock(|adc_value| *adc_value);
+        let mut counter = 0;
 
-            draw_ui(local.display, &UiState { adc_value });
-            Systick::delay(100.millis()).await;
+        init_ui(local.display);
+
+        loop {
+            counter += 1;
+
+            let adc_value = ctx.shared.adc_value.lock(|adc_value| *adc_value);
+            local.adc_history.write(adc_value);
+
+            let (s1, s2) = local.adc_history.as_slices();
+            let mut adc_history_iter = s1.iter().chain(s2.iter());
+
+            draw_ui(
+                local.display,
+                &mut UiState {
+                    adc_value,
+                    adc_history_iter: &mut adc_history_iter,
+                    counter,
+                    sample_counter: ctx
+                        .shared
+                        .sample_counter
+                        .lock(|sample_counter| sample_counter.0),
+                },
+            );
         }
     }
 }
