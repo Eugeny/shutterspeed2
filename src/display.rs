@@ -2,7 +2,7 @@ use core::ops::{Deref, DerefMut};
 
 use display_interface_spi::SPIInterfaceNoCS;
 use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::geometry::{Point, Size};
+use embedded_graphics::geometry::{OriginDimensions, Point, Size};
 use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
@@ -14,9 +14,6 @@ use embedded_text::alignment::HorizontalAlignment;
 use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use mipidsi::models::ST7789;
-
-const WIDTH: u32 = 320;
-const HEIGHT: u32 = 240;
 
 pub struct Display<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin> {
     inner: mipidsi::Display<SPIInterfaceNoCS<SPI, DC>, ST7789, RST>,
@@ -42,6 +39,14 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin>
         self.inner.clear(Rgb565::BLACK).unwrap();
     }
 
+    pub fn height(&self) -> u32 {
+        self.size().height
+    }
+
+    pub fn width(&self) -> u32 {
+        self.size().width
+    }
+
     pub fn panic_error<S: AsRef<str>>(&mut self, message: S) {
         self.clear();
 
@@ -54,14 +59,17 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin>
 
         let _ = TextBox::with_textbox_style(
             "FATAL ERROR",
-            Rectangle::new(Point::new(10, 20), Size::new(WIDTH - 20, 100)),
+            Rectangle::new(Point::new(10, 20), Size::new(self.width() - 20, 100)),
             character_style,
             textbox_style,
         )
         .draw(&mut self.inner);
         let _ = TextBox::with_textbox_style(
             message.as_ref(),
-            Rectangle::new(Point::new(10, 60), Size::new(WIDTH - 20, HEIGHT - 20)),
+            Rectangle::new(
+                Point::new(10, 60),
+                Size::new(self.width() - 20, self.height() - 20),
+            ),
             character_style,
             textbox_style,
         )

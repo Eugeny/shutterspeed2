@@ -10,6 +10,7 @@ use display::Display;
 use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_hal::blocking::delay::DelayMs;
+use hal::adc::config::{AdcConfig, Resolution, SampleTime, Dma, Sequence};
 use hal::gpio::Speed;
 use hal::spi::Spi;
 use panic_halt as _;
@@ -22,7 +23,10 @@ use ufmt::uwrite;
 
 use crate::hal::{pac, prelude::*};
 
-const DISPLAY_BRIGHTNESS: f32 = 0.5;
+const DISPLAY_BRIGHTNESS: f32 = 0.1;
+const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
+const DIGIT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
+const SAMPLE_TIME: SampleTime = SampleTime::Cycles_112;
 
 #[entry]
 fn main() -> ! {
@@ -43,8 +47,6 @@ fn main() -> ! {
         .freeze();
 
     let mut delay = dp.TIM1.delay_us(&clocks);
-
-    // cortex_m::interrupt::disable();
 
     // -----------
 
@@ -82,24 +84,40 @@ fn main() -> ! {
         (pwm.get_max_duty() as f32 * DISPLAY_BRIGHTNESS) as u16,
     );
 
-    let gpioa = dp.GPIOC.split();
-    let mut led = gpioa.pc13.into_push_pull_output();
+    let adc_pin = gpioa.pa0.into_analog();
+    let mut adc = hal::adc::Adc::adc1(
+        dp.ADC1,
+        true,
+        AdcConfig::default()
+            // .dma(Dma::Continuous)
+            .resolution(Resolution::Twelve)
+            .default_sample_time(SAMPLE_TIME)
+            .continuous(hal::adc::config::Continuous::Continuous),
+    );
+    // adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
+    adc.start_conversion();
+
+    let gpioc = dp.GPIOC.split();
+    let mut led_pin = gpioc.pc13.into_push_pull_output();
+    let mode_button_pin = gpioa.pa1.into_pull_up_input();
 
     let mut s = util::EString::<128>::default();
-    let mut counter = 0;
 
     /*
     u8g2_font_profont29_mf
     u8g2_font_spleen16x32_me
      */
-    let font = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
-    let font_digits = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
 
     loop {
         s.clear();
-        let _ = uwrite!(s, "{}", counter);
-        let res = font.render(
-            "Counter total:",
+
+        // let value = adc.current_sample();
+        let value =adc.convert(&adc_pin, SAMPLE_TIME);
+
+        let _ = uwrite!(s, "{}  ", value);
+
+        let res = TEXT_FONT.render(
+            "Current value:",
             Point::new(50, 50),
             VerticalPosition::Top,
             // FontColor::Transparent( Rgb565::RED),
@@ -116,8 +134,7 @@ fn main() -> ! {
             display.panic_error(&s[..]);
         }
 
-
-        let res = font_digits.render(
+        let res = DIGIT_FONT.render(
             &s[..],
             Point::new(50, 100),
             VerticalPosition::Top,
@@ -136,13 +153,15 @@ fn main() -> ! {
 
         // loop {
         // On for 1s, off for 3s.
-        led.set_high();
+        led_pin.set_high();
         // Use `embedded_hal::DelayMs` trait
-        delay.delay_ms(200_u32);
-        led.set_low();
+        delay.delay_ms(20_u32);
+        led_pin.set_low();
         // or use `fugit::ExtU32` trait
-        delay.delay_ms(200_u32);
+        delay.delay_ms(20_u32);
 
-        counter += 1;
+        if mode_button_pin.is_low() {
+            // counter = 0;
+        }
     }
 }
