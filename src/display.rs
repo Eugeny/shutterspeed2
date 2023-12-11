@@ -9,20 +9,23 @@ use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Drawable;
 use embedded_hal::blocking::delay::DelayUs;
-use embedded_hal::digital::v2::OutputPin;
 use embedded_text::alignment::HorizontalAlignment;
 use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use mipidsi::models::ST7789;
+use stm32f4xx_hal::gpio::{ErasedPin, Output};
 
-pub struct Display<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin> {
-    inner: mipidsi::Display<SPIInterfaceNoCS<SPI, DC>, ST7789, RST>,
+pub struct Display<SPI: embedded_hal::blocking::spi::Write<u8>> {
+    inner: mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin>
-    Display<SPI, DC, RST>
-{
-    pub fn new<Delay: DelayUs<u32>>(spi: SPI, dc_pin: DC, rst_pin: RST, delay: &mut Delay) -> Self {
+impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
+    pub fn new<Delay: DelayUs<u32>>(
+        spi: SPI,
+        dc_pin: ErasedPin<Output>,
+        rst_pin: ErasedPin<Output>,
+        delay: &mut Delay,
+    ) -> Self {
         let di = SPIInterfaceNoCS::new(spi, dc_pin);
         let display = match mipidsi::Builder::st7789(di)
             .with_orientation(mipidsi::Orientation::Landscape(true))
@@ -79,18 +82,18 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin>
     }
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin> Deref
-    for Display<SPI, DC, RST>
+impl<SPI: embedded_hal::blocking::spi::Write<u8>> Deref
+    for Display<SPI>
 {
-    type Target = mipidsi::Display<SPIInterfaceNoCS<SPI, DC>, ST7789, RST>;
+    type Target = mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>, DC: OutputPin, RST: OutputPin> DerefMut
-    for Display<SPI, DC, RST>
+impl<SPI: embedded_hal::blocking::spi::Write<u8>> DerefMut
+    for Display<SPI>
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner

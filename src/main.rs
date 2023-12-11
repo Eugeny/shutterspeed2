@@ -1,167 +1,210 @@
-#![deny(unsafe_code)]
-#![allow(clippy::empty_loop)]
-#![no_main]
 #![no_std]
+#![no_main]
+#![feature(type_alias_impl_trait)]
 
-mod display;
-mod util;
-
-use display::Display;
-use embedded_graphics::geometry::Point;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
-use embedded_hal::blocking::delay::DelayMs;
-use hal::adc::config::{AdcConfig, Resolution, SampleTime, Dma, Sequence};
-use hal::gpio::Speed;
-use hal::spi::Spi;
 use panic_halt as _;
+mod display;
+mod ui;
+mod util;
+use display::Display;
 
-use cortex_m_rt::entry;
-use stm32f4xx_hal as hal;
-use u8g2_fonts::types::{FontColor, VerticalPosition};
-use u8g2_fonts::FontRenderer;
-use ufmt::uwrite;
-
-use crate::hal::{pac, prelude::*};
-
-const DISPLAY_BRIGHTNESS: f32 = 0.1;
-const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
-const DIGIT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
-const SAMPLE_TIME: SampleTime = SampleTime::Cycles_112;
-
-#[entry]
-fn main() -> ! {
-    let dp = pac::Peripherals::take().unwrap();
-    let cp = cortex_m::peripheral::Peripherals::take().unwrap();
-
-    let gpioa = dp.GPIOA.split();
-    let gpiob = dp.GPIOB.split();
-
-    // Set up the system clock. We want to run at 48MHz for this one.
-    dp.RCC.apb2enr.write(|w| w.syscfgen().enabled());
-    let rcc = dp.RCC.constrain();
-    let clocks = rcc
-        .cfgr
-        .hclk(84.MHz())
-        // .use_hse(25.MHz())
-        .sysclk(48.MHz())
-        .freeze();
-
-    let mut delay = dp.TIM1.delay_us(&clocks);
-
-    // -----------
-
-    let mut pwm = dp
-        .TIM4
-        .pwm_hz(hal::timer::Channel4::new(gpiob.pb9), 100.Hz(), &clocks);
-    pwm.enable(hal::timer::Channel::C4);
-    pwm.set_duty(hal::timer::Channel::C4, 0);
-
-    let mut display = {
-        let mut dc_pin = gpioa.pa8.into_push_pull_output();
-        let mut rst_pin = gpioa.pa10.into_push_pull_output();
-        let mut sclk_pin = gpioa.pa5.into_alternate();
-        let mut miso_pin = gpioa.pa6.into_alternate();
-        let mut mosi_pin = gpioa.pa7.into_alternate();
-        dc_pin.set_speed(Speed::VeryHigh);
-        rst_pin.set_speed(Speed::VeryHigh);
-        sclk_pin.set_speed(Speed::VeryHigh);
-        miso_pin.set_speed(Speed::VeryHigh);
-        mosi_pin.set_speed(Speed::VeryHigh);
-        let spi = Spi::new(
-            dp.SPI1,
-            (sclk_pin, miso_pin, mosi_pin),
-            embedded_hal::spi::MODE_3,
-            2.MHz(),
-            &clocks,
-        );
-        let mut display = Display::new(spi, dc_pin, rst_pin, &mut delay);
-        display.clear();
-        display
+#[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [])]
+mod app {
+    use hal::spi::Spi;
+    use rtic_monotonics::create_systick_token;
+    use rtic_monotonics::systick::Systick;
+    use stm32f4xx_hal as hal;
+    use stm32f4xx_hal::adc::config::{
+        AdcConfig, Clock, Dma, Resolution, SampleTime, Scan, Sequence,
     };
+    use stm32f4xx_hal::adc::Adc;
+    use stm32f4xx_hal::dma::config::DmaConfig;
+    use stm32f4xx_hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
+    use stm32f4xx_hal::gpio::Speed;
+    use stm32f4xx_hal::pac::{self, ADC1, DMA2, SPI1, TIM2};
+    use stm32f4xx_hal::prelude::*;
+    use stm32f4xx_hal::timer::{CounterHz, Event, Flag};
 
-    pwm.set_duty(
-        hal::timer::Channel::C4,
-        (pwm.get_max_duty() as f32 * DISPLAY_BRIGHTNESS) as u16,
-    );
+    use crate::ui::{draw_ui, UiState};
 
-    let adc_pin = gpioa.pa0.into_analog();
-    let mut adc = hal::adc::Adc::adc1(
-        dp.ADC1,
-        true,
-        AdcConfig::default()
-            // .dma(Dma::Continuous)
+    const DISPLAY_BRIGHTNESS: f32 = 0.1;
+    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_112;
+
+    type DMATransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
+
+    #[shared]
+    struct Shared {
+        transfer: DMATransfer,
+        adc_value: u16,
+    }
+
+    #[local]
+    struct Local {
+        buffer: Option<&'static mut u16>,
+        timer: CounterHz<TIM2>,
+        display: crate::Display<Spi<SPI1>>,
+    }
+
+    #[init(local = [first_buffer: u16 = 0, second_buffer: u16 = 0])]
+    fn init(cx: init::Context) -> (Shared, Local) {
+        let dp: pac::Peripherals = cx.device;
+
+        // // Clock Configuration
+        // let rcc = dp.RCC.constrain();
+        // let clocks = rcc
+        //     .cfgr
+        //     .use_hse(8.MHz())
+        //     .sysclk(84.MHz())
+        //     .hclk(84.MHz())
+        //     .require_pll48clk()
+        //     .pclk2(21.MHz())
+        //     .freeze();
+        dp.RCC.apb2enr.write(|w| w.syscfgen().enabled());
+        let rcc = dp.RCC.constrain();
+        let clocks = rcc
+            .cfgr
+            .hclk(84.MHz())
+            // .use_hse(25.MHz())
+            .sysclk(48.MHz())
+            .freeze();
+
+        let gpioa = dp.GPIOA.split();
+        let gpiob = dp.GPIOB.split();
+        let gpioc = dp.GPIOC.split();
+
+        let mut delay = dp.TIM1.delay_us(&clocks);
+
+        let _led_pin = gpioc.pc13.into_push_pull_output();
+
+        let systick_token = create_systick_token!();
+        Systick::start(cx.core.SYST, 12_000_000, systick_token);
+
+        let mic1 = gpioa.pa0.into_analog();
+        // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
+        // Configure ADC for sequence conversion with interrtups
+        let adc_config = AdcConfig::default()
+            .dma(Dma::Continuous)
+            .scan(Scan::Enabled)
             .resolution(Resolution::Twelve)
-            .default_sample_time(SAMPLE_TIME)
-            .continuous(hal::adc::config::Continuous::Continuous),
-    );
-    // adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
-    adc.start_conversion();
+            .clock(Clock::Pclk2_div_8);
 
-    let gpioc = dp.GPIOC.split();
-    let mut led_pin = gpioc.pc13.into_push_pull_output();
-    let mode_button_pin = gpioa.pa1.into_pull_up_input();
+        let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
+        adc.configure_channel(&mic1, Sequence::One, SampleTime::Cycles_480);
 
-    let mut s = util::EString::<128>::default();
+        // DMA Configuration
+        let dma = StreamsTuple::new(dp.DMA2);
+        let dma_config = DmaConfig::default()
+            .transfer_complete_interrupt(true)
+            .memory_increment(true)
+            .double_buffer(false);
 
-    /*
-    u8g2_font_profont29_mf
-    u8g2_font_spleen16x32_me
-     */
-
-    loop {
-        s.clear();
-
-        // let value = adc.current_sample();
-        let value =adc.convert(&adc_pin, SAMPLE_TIME);
-
-        let _ = uwrite!(s, "{}  ", value);
-
-        let res = TEXT_FONT.render(
-            "Current value:",
-            Point::new(50, 50),
-            VerticalPosition::Top,
-            // FontColor::Transparent( Rgb565::RED),
-            FontColor::WithBackground {
-                fg: Rgb565::RED,
-                bg: Rgb565::BLACK,
-            },
-            &mut *display,
+        let transfer = Transfer::init_peripheral_to_memory(
+            dma.0,
+            adc,
+            cx.local.first_buffer,
+            None,
+            dma_config,
         );
-        if let Err(err) = res {
-            s.clear();
-            use core::fmt::Write;
-            let _ = write!(*s, "Failed with: {:?}", err);
-            display.panic_error(&s[..]);
-        }
 
-        let res = DIGIT_FONT.render(
-            &s[..],
-            Point::new(50, 100),
-            VerticalPosition::Top,
-            FontColor::WithBackground {
-                fg: Rgb565::RED,
-                bg: Rgb565::BLACK,
-            },
-            &mut *display,
+        let mut timer = dp.TIM2.counter_hz(&clocks);
+        timer.listen(Event::Update);
+        timer.start(1000.Hz()).unwrap();
+
+        //----
+
+        let mut pwm = dp
+            .TIM4
+            .pwm_hz(hal::timer::Channel4::new(gpiob.pb9), 100.Hz(), &clocks);
+        pwm.enable(hal::timer::Channel::C4);
+        pwm.set_duty(hal::timer::Channel::C4, 0);
+
+        let display = {
+            let mut dc_pin = gpioa.pa8.into_push_pull_output();
+            let mut rst_pin = gpioa.pa10.into_push_pull_output();
+            let mut sclk_pin = gpioa.pa5.into_alternate();
+            let mut miso_pin = gpioa.pa6.into_alternate();
+            let mut mosi_pin = gpioa.pa7.into_alternate();
+            dc_pin.set_speed(Speed::VeryHigh);
+            rst_pin.set_speed(Speed::VeryHigh);
+            sclk_pin.set_speed(Speed::VeryHigh);
+            miso_pin.set_speed(Speed::VeryHigh);
+            mosi_pin.set_speed(Speed::VeryHigh);
+            let spi = Spi::new(
+                dp.SPI1,
+                (sclk_pin, miso_pin, mosi_pin),
+                embedded_hal::spi::MODE_3,
+                2.MHz(),
+                &clocks,
+            );
+            let mut display = super::Display::new(spi, dc_pin.erase(), rst_pin.erase(), &mut delay);
+            display.clear();
+            display
+        };
+
+        pwm.set_duty(
+            hal::timer::Channel::C4,
+            (pwm.get_max_duty() as f32 * DISPLAY_BRIGHTNESS) as u16,
         );
-        if let Err(err) = res {
-            s.clear();
-            use core::fmt::Write;
-            let _ = write!(*s, "Failed with: {:?}", err);
-            display.panic_error(&s[..]);
-        }
 
-        // loop {
-        // On for 1s, off for 3s.
-        led_pin.set_high();
-        // Use `embedded_hal::DelayMs` trait
-        delay.delay_ms(20_u32);
-        led_pin.set_low();
-        // or use `fugit::ExtU32` trait
-        delay.delay_ms(20_u32);
+        display_task::spawn().unwrap();
 
-        if mode_button_pin.is_low() {
-            // counter = 0;
+        (
+            Shared {
+                transfer,
+                adc_value: 0,
+            },
+            Local {
+                buffer: Some(cx.local.second_buffer),
+                timer,
+                display,
+            },
+        )
+    }
+
+    #[task(binds = TIM2, shared = [transfer], local = [timer])]
+    fn adcstart(mut cx: adcstart::Context) {
+        cx.shared.transfer.lock(|transfer| {
+            transfer.start(|adc| {
+                adc.start_conversion();
+            });
+        });
+        cx.local.timer.clear_flags(Flag::Update);
+    }
+
+    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value], local = [buffer])]
+    fn dma(mut ctx: dma::Context) {
+        // Destructure dma::Context to make only the shared resources mutable
+        //let dma::Context { mut shared, local } = cx;
+
+        // Also Equivalent to
+        let mut shared = ctx.shared;
+        let local = ctx.local;
+
+        let buffer = shared.transfer.lock(|transfer| {
+            let (buffer, _) = transfer
+                .next_transfer(local.buffer.take().unwrap())
+                .unwrap();
+            buffer
+        });
+
+        let mic1 = *buffer;
+
+        shared.adc_value.lock(|adc_value| {
+            *adc_value = mic1;
+        });
+
+        // Return buffer to resources pool for next transfer
+        *local.buffer = Some(buffer);
+    }
+
+    #[task(local=[display], shared=[adc_value])]
+    async fn display_task(mut ctx: display_task::Context) {
+        let local = ctx.local;
+        loop {
+            let adc_value = ctx.shared.adc_value.lock(|adc_value| *adc_value);
+
+            draw_ui(local.display, &UiState { adc_value });
+            Systick::delay(100.millis()).await;
         }
     }
 }
