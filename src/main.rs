@@ -8,14 +8,8 @@ mod util;
 
 use display::Display;
 use embedded_graphics::geometry::Point;
-use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_4X6};
-use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
-use embedded_graphics::text::renderer::CharacterStyle;
-use embedded_graphics::text::Text;
-use embedded_graphics::Drawable;
 use embedded_hal::blocking::delay::DelayMs;
-use hal::dwt::DwtExt;
 use hal::gpio::Speed;
 use hal::spi::Spi;
 use panic_halt as _;
@@ -91,18 +85,41 @@ fn main() -> ! {
     let gpioa = dp.GPIOC.split();
     let mut led = gpioa.pc13.into_push_pull_output();
 
-    let mut s = util::EString::<32>::default();
+    let mut s = util::EString::<128>::default();
     let mut counter = 0;
 
-    let font = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_utopia24_tf>();
+    /*
+    u8g2_font_profont29_mf
+    u8g2_font_spleen16x32_me
+     */
+    let font = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
+    let font_digits = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
 
     loop {
         s.clear();
-        let _ = uwrite!(s, "C: {}", counter);
-
+        let _ = uwrite!(s, "{}", counter);
         let res = font.render(
-            &s[..],
+            "Counter total:",
             Point::new(50, 50),
+            VerticalPosition::Top,
+            // FontColor::Transparent( Rgb565::RED),
+            FontColor::WithBackground {
+                fg: Rgb565::RED,
+                bg: Rgb565::BLACK,
+            },
+            &mut *display,
+        );
+        if let Err(err) = res {
+            s.clear();
+            use core::fmt::Write;
+            let _ = write!(*s, "Failed with: {:?}", err);
+            display.panic_error(&s[..]);
+        }
+
+
+        let res = font_digits.render(
+            &s[..],
+            Point::new(50, 100),
             VerticalPosition::Top,
             FontColor::WithBackground {
                 fg: Rgb565::RED,
@@ -113,9 +130,8 @@ fn main() -> ! {
         if let Err(err) = res {
             s.clear();
             use core::fmt::Write;
-            let _ = write!(*s, "E: {:?}", err);
+            let _ = write!(*s, "Failed with: {:?}", err);
             display.panic_error(&s[..]);
-            loop {}
         }
 
         // loop {
