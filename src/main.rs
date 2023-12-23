@@ -10,13 +10,14 @@ mod hardware_config;
 mod measurement;
 mod ui;
 mod util;
+mod format;
 
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [SPI2, SPI3])]
 mod app {
     use core::num::Wrapping;
 
     use cortex_m_microclock::CYCCNTClock;
-    use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, SampleTime, Scan, Sequence};
+    use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
@@ -31,7 +32,7 @@ mod app {
     use stm32f4xx_hal as hal;
 
     use crate::display::Display;
-    use crate::hardware_config as hw_cfg;
+    use crate::hardware_config::{self as hw_cfg, SYSCLK, HCLK, SAMPLE_TIME, SAMPLE_RATE_HZ};
     use crate::measurement::{CalibrationState, Measurement};
     use crate::ui::{
         draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui, init_calibrating_ui,
@@ -39,10 +40,6 @@ mod app {
         ResultsUiState,
     };
     use crate::util::CycleCounterClock;
-
-    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_15;
-    const SYSCLK: u32 = 84_000_000;
-    const HCLK: u32 = 42_000_000;
 
     type DMATransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
 
@@ -99,6 +96,7 @@ mod app {
         let clocks = rcc
             .cfgr
             .sysclk(SYSCLK.Hz())
+            .require_pll48clk()
             .hclk(HCLK.MHz())
             .use_hse(25.MHz())
             .pclk1(10.MHz())
@@ -146,7 +144,7 @@ mod app {
 
         let mut timer = dp.TIM2.counter_hz(&clocks);
         timer.listen(Event::Update);
-        timer.start(100.kHz()).unwrap();
+        timer.start(SAMPLE_RATE_HZ.Hz()).unwrap();
 
         //----
 

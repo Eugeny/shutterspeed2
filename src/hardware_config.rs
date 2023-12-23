@@ -1,4 +1,10 @@
+use stm32f4xx_hal::adc::config::SampleTime;
+
 pub const DISPLAY_BRIGHTNESS: f32 = 0.9;
+pub const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
+pub const SAMPLE_RATE_HZ: u32 = 25_000_u32;
+pub const SYSCLK: u32 = 84_000_000;
+pub const HCLK: u32 = 42_000_000;
 
 
 // TIM2 <-> ADC1

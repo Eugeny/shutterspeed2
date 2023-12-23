@@ -86,9 +86,7 @@ pub enum MeasurementState<M: LaxMonotonic> {
 pub struct Measurement<M: LaxMonotonic> {
     state: MeasurementState<M>,
 
-    max: u16,
     sample_ctr: u32,
-    sum: u64,
 
     sample_start: u32,
     sample_end: u32,
@@ -105,9 +103,7 @@ impl<M: LaxMonotonic> Measurement<M> {
             state: MeasurementState::Idle {
                 pre_buffer: RingPreBuffer::new(),
             },
-            max: 0,
             sample_ctr: 0,
-            sum: 0,
             sample_end: 0,
             sample_start: 0,
             level_low: (calibration_value as f32 * threshold_low) as u16,
@@ -147,7 +143,6 @@ impl<M: LaxMonotonic> Measurement<M> {
             }
             MeasurementState::Measuring {
                 ref since,
-                // ref mut rise_buffer,
                 ref mut fall_buffer,
                 ref mut samples_since_start,
                 ref mut integrated,
@@ -178,8 +173,6 @@ impl<M: LaxMonotonic> Measurement<M> {
                     };
                     return;
                 }
-                self.sum += value as u64;
-                self.max = self.max.max(value);
                 self.sample_ctr += 1;
 
                 *samples_since_start += 1;
