@@ -410,7 +410,7 @@ mod app {
                 AppMode::None => {}
             }
 
-            Systick::delay_until(now + 300.millis()).await;
+            Systick::delay_until(now + 250.millis()).await;
         }
     }
 

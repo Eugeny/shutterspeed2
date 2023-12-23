@@ -1,6 +1,6 @@
 use heapless::HistoryBuffer;
 
-use crate::util::{LaxMonotonic, LaxDuration};
+use crate::util::{LaxDuration, LaxMonotonic};
 
 #[derive(Clone, Debug)]
 pub struct Calibration {
@@ -46,20 +46,32 @@ impl CalibrationState {
     }
 }
 
-pub type RingBuffer = HistoryBuffer<u16, 2000>;
+pub type RingPreBuffer = HistoryBuffer<u16, 1000>;
+pub type RingBuffer = HistoryBuffer<u16, 5000>;
 
 #[derive(Clone, Debug)]
 pub struct MeasurementResult {
     pub duration_micros: u64,
-    pub rise_buffer: RingBuffer,
+    // pub rise_buffer: RingBuffer,
     pub fall_buffer: RingBuffer,
+    pub samples_since_start: u32,
+    pub samples_since_end: u32,
 }
 
 pub enum MeasurementState<M: LaxMonotonic> {
-    Idle,
+    Idle {
+        pre_buffer: RingPreBuffer,
+    },
     Measuring {
         since: M::Instant,
-        rise_buffer: RingBuffer,
+        // rise_buffer: RingBuffer,
+        fall_buffer: RingBuffer,
+        samples_since_start: u32,
+    },
+    Trailing {
+        samples_since_start: u32,
+        samples_since_end: u32,
+        duration_micros: u64,
         fall_buffer: RingBuffer,
     },
     Done(MeasurementResult),
@@ -84,7 +96,9 @@ impl<M: LaxMonotonic> Measurement<M> {
         let threshold_low = 1.1;
         let threshold_high = 2.0;
         Self {
-            state: MeasurementState::Idle,
+            state: MeasurementState::Idle {
+                pre_buffer: RingPreBuffer::new(),
+            },
             max: 0,
             sample_ctr: 0,
             sum: 0,
@@ -104,40 +118,68 @@ impl<M: LaxMonotonic> Measurement<M> {
 
     pub fn step(&mut self, value: u16) {
         match &mut self.state {
-            MeasurementState::Idle => {
+            MeasurementState::Idle { pre_buffer } => {
+                pre_buffer.write(value);
                 if value > self.expected_high {
+                    let mut fall_buffer = RingBuffer::new();
+                    fall_buffer.extend_from_slice(pre_buffer.as_slice());
                     self.state = MeasurementState::Measuring {
                         since: M::now(),
-                        rise_buffer: RingBuffer::new(),
-                        fall_buffer: RingBuffer::new(),
+                        // rise_buffer: RingBuffer::new(),
+                        fall_buffer,
+                        samples_since_start: 0,
                     };
                     self.sample_start = self.sample_ctr;
                 }
             }
             MeasurementState::Measuring {
                 ref since,
-                ref mut rise_buffer,
+                // ref mut rise_buffer,
                 ref mut fall_buffer,
+                ref mut samples_since_start,
             } => {
                 if value < self.expected_low {
                     let t_end = M::now();
                     self.sample_end = self.sample_ctr;
-                    self.state = MeasurementState::Done(MeasurementResult {
+                    self.state = MeasurementState::Trailing {
                         duration_micros: (t_end - *since).to_micros(),
-                        rise_buffer: rise_buffer.clone(),
                         fall_buffer: fall_buffer.clone(),
-                    });
+                        samples_since_start: *samples_since_start,
+                        samples_since_end: 0,
+                    };
                     return;
                 }
                 self.sum += value as u64;
                 self.max = self.max.max(value);
                 self.sample_ctr += 1;
 
-                if rise_buffer.len() < rise_buffer.capacity() {
-                    rise_buffer.write(value);
-                }
+                *samples_since_start += 1;
+
+                // if rise_buffer.len() < rise_buffer.capacity() {
+                //     rise_buffer.write(value);
+                // }
 
                 fall_buffer.write(value);
+            }
+            MeasurementState::Trailing {
+                duration_micros,
+                fall_buffer,
+                ref mut samples_since_start,
+                ref mut samples_since_end,
+            } => {
+                if *samples_since_end < 200 {
+                    fall_buffer.write(value);
+                    *samples_since_end += 1;
+                    *samples_since_start += 1;
+                } else {
+                    self.state = MeasurementState::Done(MeasurementResult {
+                        duration_micros: *duration_micros,
+                        fall_buffer: fall_buffer.clone(),
+                        samples_since_start: *samples_since_start,
+                        samples_since_end: *samples_since_end,
+                    });
+                    return;
+                }
             }
             MeasurementState::Done { .. } => (),
         }

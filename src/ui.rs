@@ -2,7 +2,7 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::primitives::Rectangle;
-use heapless::HistoryBuffer;
+use embedded_graphics::Pixel;
 use stm32f4xx_hal::pac::SPI1;
 use stm32f4xx_hal::spi::Spi;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
@@ -198,26 +198,33 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
         );
     }
 
-    draw_chart(display, &state.result.rise_buffer, 0, Rgb565::GREEN);
-    draw_chart(display, &state.result.fall_buffer, 40, Rgb565::YELLOW);
+    draw_chart(display, &state.result, 40);
 }
 
-fn draw_chart<const LEN: usize>(
-    display: &mut Display<Spi<SPI1>>,
-    chart: &HistoryBuffer<u16, LEN>,
-    graph_y: i32,
-    color: Rgb565,
-) {
-    let width = display.width().min(LEN as u32);
+fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, graph_y: i32) {
+    let chart = &result.fall_buffer;
+    let len = chart.len();
+    let width = display.width();
     let graph_rect = Rectangle::new(Point::new(0, graph_y), Size::new(width, 40));
 
     let min = chart.iter().min().cloned().unwrap_or(0);
     let max = chart.iter().max().cloned().unwrap_or(0).max(min + 1);
 
-    let chunk_size = LEN / width as usize;
+    let chunk_size = (len / width as usize).max(1);
     let mut i = 0;
     let mut done = false;
     let mut iter = chart.oldest_ordered();
+
+    let xy_to_coords = |x: u16, y: u16| {
+        let x = x / chunk_size as u16;
+        let y = (y - min) as i32;
+
+        let y = y * graph_rect.size.height as i32 / (max - min) as i32;
+
+        let x = x as i32 + graph_rect.top_left.x;
+        let y = graph_rect.bottom_right().unwrap().y as i32 - y;
+        (x, y)
+    };
 
     while !done {
         let mut sum = 0;
@@ -235,19 +242,28 @@ fn draw_chart<const LEN: usize>(
             break;
         }
         let avg: u16 = sum / count;
-        let x = i as i32;
-        let y = (avg - min) as i32;
 
-        let y = y * graph_rect.size.height as i32 / (max - min) as i32;
-
-        let x = x + graph_rect.top_left.x as i32;
-        let y = graph_rect.bottom_right().unwrap().y as i32 - y;
-
+        let (x, y) = xy_to_coords(i * chunk_size as u16, avg);
         display
-            .fill_solid(&Rectangle::new(Point::new(x, y), Size::new(2, 2)), color)
+            .fill_solid(
+                &Rectangle::new(Point::new(x, y), Size::new(2, 2)),
+                Rgb565::YELLOW,
+            )
             .unwrap();
 
         i += 1;
+    }
+
+    let start_x = chart.len() - result.samples_since_start as usize;
+    if let Some(start_y) = chart.get(start_x) {
+        let (x, y) = xy_to_coords(start_x as u16, *start_y);
+        draw_cross(display, Point::new(x, y), 5, Rgb565::GREEN);
+    }
+
+    let end_x = chart.len() - result.samples_since_end as usize;
+    if let Some(end_y) = chart.get(end_x) {
+        let (x, y) = xy_to_coords(end_x as u16, *end_y);
+        draw_cross(display, Point::new(x, y), 5, Rgb565::RED);
     }
 }
 
@@ -336,4 +352,18 @@ fn _write_fraction<W: uWrite>(s: &mut W, fraction: f32) {
     let int = fraction as u32;
     let fr = (fraction - int as f32) * 10.0;
     let _ = uwrite!(s, "{}.{}", int, fr as u32);
+}
+
+pub fn draw_cross(display: &mut Display<Spi<SPI1>>, point: Point, size: u32, color: Rgb565) {
+    for dir in [-1, 1] {
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            display
+                .draw_iter(
+                    (-(size as i32)..size as i32).into_iter().map(|i| {
+                        Pixel(Point::new(point.x + dx + i, point.y + dy + i * dir), color)
+                    }),
+                )
+                .unwrap();
+        }
+    }
 }
