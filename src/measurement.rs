@@ -46,7 +46,7 @@ impl CalibrationState {
     }
 }
 
-pub type RingBuffer = HistoryBuffer<u16, 320>;
+pub type RingBuffer = HistoryBuffer<u16, 2000>;
 
 #[derive(Clone, Debug)]
 pub struct MeasurementResult {
@@ -133,7 +133,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                 self.max = self.max.max(value);
                 self.sample_ctr += 1;
 
-                if !rise_buffer.len() < rise_buffer.capacity() {
+                if rise_buffer.len() < rise_buffer.capacity() {
                     rise_buffer.write(value);
                 }
 

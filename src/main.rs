@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 #![feature(associated_type_bounds)]
+#![feature(iter_array_chunks)]
 
 use panic_halt as _;
 mod display;
@@ -39,7 +40,7 @@ mod app {
     };
     use crate::util::CycleCounterClock;
 
-    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_28;
+    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
     const SYSCLK: u32 = 84_000_000;
     const HCLK: u32 = 42_000_000;
 
@@ -243,8 +244,15 @@ mod app {
     }
 
     #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin], priority = 4)]
-    fn measure_button_press(ctx: measure_button_press::Context) {
-        let _ = measure_task::spawn();
+    fn measure_button_press(mut ctx: measure_button_press::Context) {
+        ctx.shared.app_mode.lock(|app_mode| {
+            if *app_mode == AppMode::Measure {
+                *app_mode = AppMode::Start;
+            } else {
+                let _ = measure_task::spawn();
+            }
+        });
+
         ctx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
@@ -353,8 +361,8 @@ mod app {
                     local.adc_history.write(adc_value);
                     local.adc_avg_window.write(adc_value);
 
-                    let avg_adc_value = local.adc_avg_window.iter().sum::<u16>()
-                        / local.adc_avg_window.len() as u16;
+                    // let avg_adc_value = local.adc_avg_window.iter().sum::<u16>()
+                    //     / local.adc_avg_window.len() as u16;
 
                     let min_adc_value = *local.adc_avg_window.iter().min().unwrap_or(&0);
                     let max_adc_value = *local.adc_avg_window.iter().max().unwrap_or(&0);

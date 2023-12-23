@@ -11,7 +11,7 @@ use ufmt::{uWrite, uwrite};
 
 use crate::display::Display;
 use crate::measurement::{CalibrationState, MeasurementResult};
-use crate::util::{CycleCounterClock, EString};
+use crate::util::EString;
 
 const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
 const SMALL_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_profont29_mr>();
@@ -198,19 +198,45 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
         );
     }
 
-    draw_chart(display, &state.result.rise_buffer, Rgb565::GREEN);
-    draw_chart(display, &state.result.fall_buffer, Rgb565::YELLOW);
+    draw_chart(display, &state.result.rise_buffer, 0, Rgb565::GREEN);
+    draw_chart(display, &state.result.fall_buffer, 40, Rgb565::YELLOW);
 }
 
-fn draw_chart(display: &mut Display<Spi<SPI1>>, chart: &HistoryBuffer<u16, 320>, color: Rgb565) {
-    let graph_rect = Rectangle::new(Point::new(0, 20), Size::new(display.width(), 40));
+fn draw_chart<const LEN: usize>(
+    display: &mut Display<Spi<SPI1>>,
+    chart: &HistoryBuffer<u16, LEN>,
+    graph_y: i32,
+    color: Rgb565,
+) {
+    let width = display.width().min(LEN as u32);
+    let graph_rect = Rectangle::new(Point::new(0, graph_y), Size::new(width, 40));
 
-    let max = chart.iter().max().cloned().unwrap_or(1);
     let min = chart.iter().min().cloned().unwrap_or(0);
+    let max = chart.iter().max().cloned().unwrap_or(0).max(min + 1);
 
-    for (i, adc_value) in chart.oldest_ordered().enumerate() {
+    let chunk_size = LEN / width as usize;
+    let mut i = 0;
+    let mut done = false;
+    let mut iter = chart.oldest_ordered();
+
+    while !done {
+        let mut sum = 0;
+        let mut count = 0;
+        for _ in 0..chunk_size {
+            if let Some(x) = iter.next() {
+                sum += x;
+                count += 1;
+            } else {
+                done = true;
+                break;
+            }
+        }
+        if count == 0 {
+            break;
+        }
+        let avg: u16 = sum / count;
         let x = i as i32;
-        let y = (*adc_value - min) as i32;
+        let y = (avg - min) as i32;
 
         let y = y * graph_rect.size.height as i32 / (max - min) as i32;
 
@@ -220,6 +246,8 @@ fn draw_chart(display: &mut Display<Spi<SPI1>>, chart: &HistoryBuffer<u16, 320>,
         display
             .fill_solid(&Rectangle::new(Point::new(x, y), Size::new(2, 2)), color)
             .unwrap();
+
+        i += 1;
     }
 }
 
