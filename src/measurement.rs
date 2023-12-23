@@ -130,7 +130,6 @@ impl<M: LaxMonotonic> Measurement<M> {
 
                     self.state = MeasurementState::Measuring {
                         since: M::now(),
-                        // rise_buffer: RingBuffer::new(),
                         sample_buffer,
                         peak: value,
                         samples_since_start: 0,

@@ -3,6 +3,7 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Pixel;
+use heapless::HistoryBuffer;
 use micromath::F32Ext;
 use stm32f4xx_hal::pac::SPI1;
 use stm32f4xx_hal::spi::Spi;
@@ -28,11 +29,11 @@ pub struct ResultsUiState {
     pub result_samples: u32,
 }
 
-pub struct DebugUiState {
+pub struct DebugUiState<'a> {
     pub adc_value: u16,
     pub min_adc_value: u16,
     pub max_adc_value: u16,
-    // pub adc_history_iter: &'a mut dyn Iterator<Item = &'a u16>,
+    pub adc_history: &'a HistoryBuffer<u16, 100>,
     pub sample_counter: u32,
 }
 
@@ -114,7 +115,7 @@ pub fn init_results_ui(display: &mut Display<Spi<SPI1>>) {
 
 pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState) {
     {
-        let duration_micros = state.result.integrated_duration_micros;
+        let duration_micros = state.result.integrated_duration_micros.max(1);
         let mut s = EString::<128>::default();
         s.clear();
         if duration_micros < 500_000 {
@@ -184,13 +185,24 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
         );
     }
 
-    draw_chart(display, &state.result, 45);
+    draw_chart(
+        display,
+        &state.result.sample_buffer,
+        45,
+        Some(state.result.samples_since_start),
+        Some(state.result.samples_since_end),
+    );
 }
 
-fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, graph_y: i32) {
+fn draw_chart<const LEN: usize>(
+    display: &mut Display<Spi<SPI1>>,
+    chart: &HistoryBuffer<u16, LEN>,
+    graph_y: i32,
+    samples_since_start: Option<usize>,
+    samples_since_end: Option<usize>,
+) {
     let padding = 10;
 
-    let chart = &result.sample_buffer;
     let len = chart.len();
     let width = display.width() - padding * 2;
     let graph_rect = Rectangle::new(Point::new(padding as i32, graph_y), Size::new(width, 40));
@@ -235,23 +247,27 @@ fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, grap
         display
             .fill_solid(
                 &Rectangle::new(Point::new(x, y), Size::new(2, 2)),
-                Rgb565::CYAN,
+                Rgb565::RED,
             )
             .unwrap();
 
         i += 1;
     }
 
-    let start_x = chart.len() - result.samples_since_start as usize;
-    if let Some(start_y) = chart.get(start_x) {
-        let (x, y) = xy_to_coords(start_x as u16, *start_y);
-        draw_cross(display, Point::new(x, y), 5, Rgb565::GREEN);
+    if let Some(samples_since_start) = samples_since_start {
+        let start_x = chart.len() - samples_since_start as usize;
+        if let Some(start_y) = chart.get(start_x) {
+            let (x, y) = xy_to_coords(start_x as u16, *start_y);
+            draw_cross(display, Point::new(x, y), 5, Rgb565::GREEN);
+        }
     }
 
-    let end_x = chart.len() - result.samples_since_end as usize;
-    if let Some(end_y) = chart.get(end_x) {
-        let (x, y) = xy_to_coords(end_x as u16, *end_y);
-        draw_cross(display, Point::new(x, y), 5, Rgb565::RED);
+    if let Some(samples_since_end) = samples_since_end {
+        let end_x = chart.len() - samples_since_end as usize;
+        if let Some(end_y) = chart.get(end_x) {
+            let (x, y) = xy_to_coords(end_x as u16, *end_y);
+            draw_cross(display, Point::new(x, y), 5, Rgb565::YELLOW);
+        }
     }
 }
 
@@ -261,7 +277,7 @@ pub fn init_debug_ui(display: &mut Display<Spi<SPI1>>) {
     SMALL_FONT
         .render(
             "Current value:",
-            Point::new(50, 50),
+            Point::new(10, 80),
             VerticalPosition::Top,
             // FontColor::Transparent( Rgb565::RED),
             FontColor::WithBackground {
@@ -274,6 +290,8 @@ pub fn init_debug_ui(display: &mut Display<Spi<SPI1>>) {
 }
 
 pub fn draw_debug_ui(display: &mut Display<Spi<SPI1>>, state: &mut DebugUiState) {
+    draw_chart(display, state.adc_history, 10, None, None);
+
     let mut s = EString::<128>::default();
     s.clear();
 
@@ -282,10 +300,10 @@ pub fn draw_debug_ui(display: &mut Display<Spi<SPI1>>, state: &mut DebugUiState)
     let _ = uwrite!(s, "{} +-{}  ", state.adc_value, variation);
     let res = LARGE_DIGIT_FONT.render(
         &s[..],
-        Point::new(50, 80),
+        Point::new(10, 110),
         VerticalPosition::Top,
         FontColor::WithBackground {
-            fg: Rgb565::RED,
+            fg: Rgb565::WHITE,
             bg: Rgb565::BLACK,
         },
         &mut **display,
@@ -299,13 +317,13 @@ pub fn draw_debug_ui(display: &mut Display<Spi<SPI1>>, state: &mut DebugUiState)
 
     s.clear();
     let _ = uwrite!(s, "Samples: {}", state.sample_counter);
-    SMALL_FONT
+    TINY_FONT
         .render(
             &s[..],
             Point::new(50, 180),
             VerticalPosition::Top,
             FontColor::WithBackground {
-                fg: Rgb565::WHITE,
+                fg: Rgb565::RED,
                 bg: Rgb565::BLACK,
             },
             &mut **display,

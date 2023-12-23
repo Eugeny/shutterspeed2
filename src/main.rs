@@ -68,7 +68,7 @@ mod app {
         adc_dma_buffer: Option<&'static mut u16>,
         timer: CounterHz<TIM2>,
         display: Display<Spi<SPI1>>,
-        adc_history: HistoryBuffer<u16, 320>,
+        adc_history: HistoryBuffer<u16, 100>,
         adc_avg_window: HistoryBuffer<u16, 4>,
         mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
@@ -365,6 +365,7 @@ mod app {
                             adc_value,
                             min_adc_value,
                             max_adc_value,
+                            adc_history: local.adc_history,
                             // adc_value: avg_adc_value,
                             sample_counter: ctx
                                 .shared
