@@ -1,9 +1,12 @@
 #![no_std]
 #![no_main]
 #![feature(type_alias_impl_trait)]
+#![feature(associated_type_bounds)]
 
 use panic_halt as _;
 mod display;
+mod hardware_config;
+mod measurement;
 mod ui;
 mod util;
 
@@ -11,6 +14,7 @@ mod util;
 mod app {
     use core::num::Wrapping;
 
+    use cortex_m_microclock::CYCCNTClock;
     use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, SampleTime, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
@@ -26,15 +30,18 @@ mod app {
     use stm32f4xx_hal as hal;
 
     use crate::display::Display;
+    use crate::hardware_config as hw_cfg;
+    use crate::measurement::{CalibrationState, Measurement};
     use crate::ui::{
         draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui, init_calibrating_ui,
         init_debug_ui, init_measuring_ui, init_results_ui, init_start_ui, DebugUiState,
         ResultsUiState,
     };
+    use crate::util::CycleCounterClock;
 
-    const DISPLAY_BRIGHTNESS: f32 = 0.1;
-    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_480;
-    const SYSCLK: u32 = 48_000_000;
+    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_28;
+    const SYSCLK: u32 = 84_000_000;
+    const HCLK: u32 = 42_000_000;
 
     type DMATransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
 
@@ -54,7 +61,8 @@ mod app {
         adc_value: u16,
         sample_counter: Wrapping<u32>,
         app_mode: AppMode,
-        calibration_value: u16,
+        calibration_state: CalibrationState,
+        measurement: Measurement<CycleCounterClock<SYSCLK>>,
     }
 
     #[local]
@@ -69,7 +77,7 @@ mod app {
     }
 
     #[init(local = [first_buffer: u16 = 0, second_buffer: u16 = 0])]
-    fn init(cx: init::Context) -> (Shared, Local) {
+    fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut dp: pac::Peripherals = cx.device;
 
         let mut syscfg = dp.SYSCFG.constrain();
@@ -84,28 +92,30 @@ mod app {
         //     .require_pll48clk()
         //     .pclk2(21.MHz())
         //     .freeze();
-        dp.RCC.apb2enr.write(|w| w.syscfgen().enabled());
+        // dp.RCC.apb2enr.write(|w| w.syscfgen().enabled());
+
         let rcc = dp.RCC.constrain();
         let clocks = rcc
             .cfgr
-            .hclk(84.MHz())
-            .use_hse(25.MHz())
             .sysclk(SYSCLK.Hz())
-            .require_pll48clk()
+            .hclk(HCLK.MHz())
+            .use_hse(25.MHz())
+            .pclk1(10.MHz())
             .pclk2(10.MHz())
             .freeze();
+
+        CYCCNTClock::<SYSCLK>::init(&mut cx.core.DCB, cx.core.DWT);
+
+        let systick_token = create_systick_token!();
+        Systick::start(cx.core.SYST, SYSCLK, systick_token);
 
         let gpioa = dp.GPIOA.split();
         let gpiob = dp.GPIOB.split();
         let gpioc = dp.GPIOC.split();
 
-        let mut delay = dp.TIM1.delay_us(&clocks);
+        let mut delay = dp.TIM3.delay_us(&clocks);
 
         let mut led_pin = gpioc.pc13.into_push_pull_output();
-        led_pin.set_low();
-
-        let systick_token = create_systick_token!();
-        Systick::start(cx.core.SYST, SYSCLK, systick_token);
 
         let adc_pin = gpioa.pa0.into_analog();
         // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
@@ -113,7 +123,7 @@ mod app {
         let adc_config = AdcConfig::default()
             .dma(Dma::Continuous)
             .scan(Scan::Disabled)
-            .clock(Clock::Pclk2_div_2)
+            .clock(Clock::Pclk2_div_8)
             .resolution(Resolution::Ten);
 
         let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
@@ -171,7 +181,7 @@ mod app {
 
         pwm.set_duty(
             hal::timer::Channel::C4,
-            (pwm.get_max_duty() as f32 * DISPLAY_BRIGHTNESS) as u16,
+            (pwm.get_max_duty() as f32 * hw_cfg::DISPLAY_BRIGHTNESS) as u16,
         );
 
         let mut mode_button_pin = gpioa.pa1.into_pull_down_input();
@@ -184,11 +194,8 @@ mod app {
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
-        // unsafe {
-        //     cortex_m::peripheral::NVIC::unmask(mode_button_pin.interrupt());
-        // }
-
         display_task::spawn().unwrap();
+        led_pin.set_low();
 
         (
             Shared {
@@ -196,7 +203,8 @@ mod app {
                 adc_value: 0,
                 sample_counter: Wrapping(0),
                 app_mode: AppMode::Start,
-                calibration_value: 0,
+                calibration_state: CalibrationState::Done(0),
+                measurement: Measurement::new(0),
             },
             Local {
                 buffer: Some(cx.local.second_buffer),
@@ -220,7 +228,7 @@ mod app {
         cx.local.timer.clear_flags(Flag::Update);
     }
 
-    #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 3)]
+    #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 4)]
     fn mode_button_press(mut ctx: mode_button_press::Context) {
         ctx.shared.app_mode.lock(|app_mode| {
             *app_mode = match *app_mode {
@@ -234,13 +242,13 @@ mod app {
         ctx.local.mode_button_pin.clear_interrupt_pending_bit();
     }
 
-    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin], priority = 3)]
-    fn measure_button_press(mut ctx: measure_button_press::Context) {
+    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin], priority = 4)]
+    fn measure_button_press(ctx: measure_button_press::Context) {
         let _ = measure_task::spawn();
         ctx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
-    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter], local = [buffer])]
+    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [buffer], priority = 3)]
     fn dma(ctx: dma::Context) {
         let mut shared = ctx.shared;
         let local = ctx.local;
@@ -252,52 +260,79 @@ mod app {
             buffer
         });
 
-        let mic1 = *buffer;
+        let value = *buffer;
 
-        shared.adc_value.lock(|adc_value| {
-            *adc_value = mic1;
-        });
         shared.sample_counter.lock(|sample_counter| {
             *sample_counter += Wrapping(1);
+        });
+
+        (shared.adc_value, shared.calibration_state).lock(|adc_value, calibration_state| {
+            if let CalibrationState::InProgress(ref mut calibration) = calibration_state {
+                calibration.add(value)
+            }
+            *adc_value = value;
+        });
+
+        shared.measurement.lock(|measurement| {
+            measurement.step(value);
         });
 
         // Return buffer to resources pool for next transfer
         *local.buffer = Some(buffer);
     }
 
-    #[task(shared=[app_mode, adc_value, calibration_value], priority=10)]
+    #[task(shared=[app_mode, adc_value, calibration_state, measurement], priority=2)]
     async fn measure_task(mut ctx: measure_task::Context) {
         ctx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
+        ctx.shared.calibration_state.lock(|calibration_state| {
+            calibration_state.begin();
+        });
 
-        Systick::delay(1000.millis()).await;
+        Systick::delay(1.secs().into()).await;
 
-        let adc = ctx.shared.adc_value.lock(|adc_value| *adc_value);
-        ctx.shared.calibration_value.lock(|calibration_value| {
-            *calibration_value = adc;
+        let calibration_value = ctx.shared.calibration_state.lock(|state| state.finish());
+        ctx.shared.measurement.lock(|measurement| {
+            *measurement = Measurement::new(calibration_value);
         });
 
         ctx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Measure;
         });
 
-        Systick::delay(1000.millis()).await;
+        loop {
+            ctx.shared.app_mode.lock(|app_mode| {
+                if *app_mode != AppMode::Measure {
+                    // Cancelled
+                    return;
+                }
+            });
+
+            if ctx
+                .shared
+                .measurement
+                .lock(|measurement| measurement.is_done())
+            {
+                break;
+            }
+            Systick::delay(100.millis().into()).await;
+        }
 
         ctx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Results;
         });
     }
 
-    #[task(local=[display, adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_value], priority=1)]
+    #[task(local=[display, adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_state, measurement], priority=1)]
     async fn display_task(mut ctx: display_task::Context) {
         let local = ctx.local;
+        init_calibrating_ui(local.display);
 
         let mut mode = AppMode::None;
 
         loop {
             let now = Systick::now();
-
             ctx.shared.app_mode.lock(|app_mode| {
                 if *app_mode != mode {
                     mode = *app_mode;
@@ -321,10 +356,16 @@ mod app {
                     let avg_adc_value = local.adc_avg_window.iter().sum::<u16>()
                         / local.adc_avg_window.len() as u16;
 
+                    let min_adc_value = *local.adc_avg_window.iter().min().unwrap_or(&0);
+                    let max_adc_value = *local.adc_avg_window.iter().max().unwrap_or(&0);
+
                     draw_debug_ui(
                         local.display,
                         &mut DebugUiState {
-                            adc_value: avg_adc_value,
+                            adc_value,
+                            min_adc_value,
+                            max_adc_value,
+                            // adc_value: avg_adc_value,
                             sample_counter: ctx
                                 .shared
                                 .sample_counter
@@ -335,19 +376,33 @@ mod app {
                 AppMode::Start => draw_start_ui(local.display),
                 AppMode::Calibrating => {}
                 AppMode::Measure => draw_measuring_ui(local.display),
-                AppMode::Results => draw_results_ui(
-                    local.display,
-                    &ResultsUiState {
-                        calibration_value: ctx
-                            .shared
-                            .calibration_value
-                            .lock(|calibration_value| *calibration_value),
-                    },
-                ),
+                AppMode::Results => {
+                    let calibration = ctx
+                        .shared
+                        .calibration_state
+                        .lock(|calibration_state| calibration_state.clone());
+                    let result = ctx
+                        .shared
+                        .measurement
+                        .lock(|measurement| measurement.result().cloned())
+                        .unwrap();
+                    let result_samples = ctx
+                        .shared
+                        .measurement
+                        .lock(|measurement| measurement.result_samples());
+                    draw_results_ui(
+                        local.display,
+                        &ResultsUiState {
+                            calibration,
+                            result,
+                            result_samples,
+                        },
+                    )
+                }
                 AppMode::None => {}
             }
 
-            Systick::delay_until(now + 200.millis()).await;
+            Systick::delay_until(now + 300.millis()).await;
         }
     }
 
