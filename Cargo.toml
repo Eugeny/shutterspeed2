@@ -33,6 +33,7 @@ rtic = { version = "2", features = [
     "thumbv7-backend",
 ] }
 cortex-m-microclock = "0.1.0"
+micromath = { version = "2.1.0", features = ["num-traits"] }
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"

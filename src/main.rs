@@ -40,7 +40,7 @@ mod app {
     };
     use crate::util::CycleCounterClock;
 
-    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
+    const SAMPLE_TIME: SampleTime = SampleTime::Cycles_15;
     const SYSCLK: u32 = 84_000_000;
     const HCLK: u32 = 42_000_000;
 
@@ -68,7 +68,7 @@ mod app {
 
     #[local]
     struct Local {
-        buffer: Option<&'static mut u16>,
+        adc_dma_buffer: Option<&'static mut u16>,
         timer: CounterHz<TIM2>,
         display: Display<Spi<SPI1>>,
         adc_history: HistoryBuffer<u16, 320>,
@@ -77,7 +77,7 @@ mod app {
         measure_button_pin: ErasedPin<Input>,
     }
 
-    #[init(local = [first_buffer: u16 = 0, second_buffer: u16 = 0])]
+    #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
     fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut dp: pac::Peripherals = cx.device;
 
@@ -124,8 +124,8 @@ mod app {
         let adc_config = AdcConfig::default()
             .dma(Dma::Continuous)
             .scan(Scan::Disabled)
-            .clock(Clock::Pclk2_div_8)
-            .resolution(Resolution::Ten);
+            .clock(Clock::Pclk2_div_6)
+            .resolution(Resolution::Twelve);
 
         let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
         adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
@@ -134,7 +134,6 @@ mod app {
         let dma = StreamsTuple::new(dp.DMA2);
         let dma_config = DmaConfig::default()
             .transfer_complete_interrupt(true)
-            .memory_increment(true)
             .double_buffer(false);
 
         let transfer = Transfer::init_peripheral_to_memory(
@@ -208,7 +207,7 @@ mod app {
                 measurement: Measurement::new(0),
             },
             Local {
-                buffer: Some(cx.local.second_buffer),
+                adc_dma_buffer: Some(cx.local._adc_dma_buffer),
                 timer,
                 display,
                 adc_history: HistoryBuffer::new(),
@@ -256,37 +255,39 @@ mod app {
         ctx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
-    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [buffer], priority = 3)]
+    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [adc_dma_buffer], priority = 3)]
     fn dma(ctx: dma::Context) {
         let mut shared = ctx.shared;
         let local = ctx.local;
 
-        let buffer = shared.transfer.lock(|transfer| {
-            let (buffer, _) = transfer
-                .next_transfer(local.buffer.take().unwrap())
+        let last_adc_dma_buffer = shared.transfer.lock(|transfer| {
+            let (last_adc_dma_buffer, _) = transfer
+                .next_transfer(local.adc_dma_buffer.take().unwrap())
                 .unwrap();
-            buffer
+            last_adc_dma_buffer
         });
 
-        let value = *buffer;
+        let value = *last_adc_dma_buffer;
+        // Return adc_dma_buffer to resources pool for next transfer
+        *local.adc_dma_buffer = Some(last_adc_dma_buffer);
 
-        shared.sample_counter.lock(|sample_counter| {
-            *sample_counter += Wrapping(1);
-        });
-
-        (shared.adc_value, shared.calibration_state).lock(|adc_value, calibration_state| {
-            if let CalibrationState::InProgress(ref mut calibration) = calibration_state {
-                calibration.add(value)
-            }
-            *adc_value = value;
-        });
-
-        shared.measurement.lock(|measurement| {
-            measurement.step(value);
-        });
-
-        // Return buffer to resources pool for next transfer
-        *local.buffer = Some(buffer);
+        (
+            shared.adc_value,
+            shared.calibration_state,
+            shared.measurement,
+            shared.sample_counter,
+        )
+            .lock(
+                |adc_value, calibration_state, measurement, sample_counter| {
+                    if let CalibrationState::InProgress(ref mut calibration) = calibration_state {
+                        calibration.add(value)
+                    } else {
+                        measurement.step(value);
+                    }
+                    *adc_value = value;
+                    *sample_counter += Wrapping(1);
+                },
+            );
     }
 
     #[task(shared=[app_mode, adc_value, calibration_state, measurement], priority=2)]
@@ -324,7 +325,8 @@ mod app {
             {
                 break;
             }
-            Systick::delay(100.millis().into()).await;
+
+            Systick::delay(10.millis().into()).await;
         }
 
         ctx.shared.app_mode.lock(|app_mode| {

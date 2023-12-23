@@ -49,13 +49,16 @@ impl CalibrationState {
 pub type RingPreBuffer = HistoryBuffer<u16, 1000>;
 pub type RingBuffer = HistoryBuffer<u16, 5000>;
 
+const MARGIN_SAMPLES: usize = 200;
+
 #[derive(Clone, Debug)]
 pub struct MeasurementResult {
     pub duration_micros: u64,
+    pub integrated_duration_micros: u64,
     // pub rise_buffer: RingBuffer,
     pub fall_buffer: RingBuffer,
-    pub samples_since_start: u32,
-    pub samples_since_end: u32,
+    pub samples_since_start: usize,
+    pub samples_since_end: usize,
 }
 
 pub enum MeasurementState<M: LaxMonotonic> {
@@ -66,12 +69,15 @@ pub enum MeasurementState<M: LaxMonotonic> {
         since: M::Instant,
         // rise_buffer: RingBuffer,
         fall_buffer: RingBuffer,
-        samples_since_start: u32,
+        samples_since_start: usize,
+        peak: u16,
+        integrated: u64, // samples x (abs value)
     },
     Trailing {
-        samples_since_start: u32,
-        samples_since_end: u32,
+        samples_since_start: usize,
+        samples_since_end: usize,
         duration_micros: u64,
+        integrated_duration_micros: u64,
         fall_buffer: RingBuffer,
     },
     Done(MeasurementResult),
@@ -88,12 +94,12 @@ pub struct Measurement<M: LaxMonotonic> {
     sample_end: u32,
 
     expected_high: u16,
-    expected_low: u16,
+    level_low: u16,
 }
 
 impl<M: LaxMonotonic> Measurement<M> {
     pub fn new(calibration_value: u16) -> Self {
-        let threshold_low = 1.1;
+        let threshold_low = 1.5;
         let threshold_high = 2.0;
         Self {
             state: MeasurementState::Idle {
@@ -104,7 +110,7 @@ impl<M: LaxMonotonic> Measurement<M> {
             sum: 0,
             sample_end: 0,
             sample_start: 0,
-            expected_low: (calibration_value as f32 * threshold_low) as u16,
+            level_low: (calibration_value as f32 * threshold_low) as u16,
             expected_high: (calibration_value as f32 * threshold_high) as u16,
         }
     }
@@ -122,12 +128,19 @@ impl<M: LaxMonotonic> Measurement<M> {
                 pre_buffer.write(value);
                 if value > self.expected_high {
                     let mut fall_buffer = RingBuffer::new();
-                    fall_buffer.extend_from_slice(pre_buffer.as_slice());
+                    fall_buffer.extend(
+                        pre_buffer
+                            .oldest_ordered()
+                            .skip(pre_buffer.len() - MARGIN_SAMPLES),
+                    );
+
                     self.state = MeasurementState::Measuring {
                         since: M::now(),
                         // rise_buffer: RingBuffer::new(),
                         fall_buffer,
+                        peak: value,
                         samples_since_start: 0,
+                        integrated: 0,
                     };
                     self.sample_start = self.sample_ctr;
                 }
@@ -137,15 +150,31 @@ impl<M: LaxMonotonic> Measurement<M> {
                 // ref mut rise_buffer,
                 ref mut fall_buffer,
                 ref mut samples_since_start,
+                ref mut integrated,
+                ref mut peak,
             } => {
-                if value < self.expected_low {
+                if value < self.level_low {
                     let t_end = M::now();
                     self.sample_end = self.sample_ctr;
+
+                    // remove area below threshold
+                    let integrated_value_samples =
+                        *integrated - *samples_since_start as u64 * self.level_low as u64;
+
+                    // scale Y to 0-1
+                    let integrated_duration_samples =
+                        integrated_value_samples / (*peak - self.level_low) as u64;
+
+                    let duration_micros = (t_end - *since).to_micros();
+                    let integrated_duration_micros =
+                        integrated_duration_samples * duration_micros / *samples_since_start as u64;
+
                     self.state = MeasurementState::Trailing {
-                        duration_micros: (t_end - *since).to_micros(),
+                        duration_micros,
                         fall_buffer: fall_buffer.clone(),
                         samples_since_start: *samples_since_start,
                         samples_since_end: 0,
+                        integrated_duration_micros,
                     };
                     return;
                 }
@@ -154,10 +183,8 @@ impl<M: LaxMonotonic> Measurement<M> {
                 self.sample_ctr += 1;
 
                 *samples_since_start += 1;
-
-                // if rise_buffer.len() < rise_buffer.capacity() {
-                //     rise_buffer.write(value);
-                // }
+                *integrated += value as u64;
+                *peak = (*peak).max(value);
 
                 fall_buffer.write(value);
             }
@@ -166,14 +193,16 @@ impl<M: LaxMonotonic> Measurement<M> {
                 fall_buffer,
                 ref mut samples_since_start,
                 ref mut samples_since_end,
+                integrated_duration_micros,
             } => {
-                if *samples_since_end < 200 {
+                if *samples_since_end < MARGIN_SAMPLES {
                     fall_buffer.write(value);
                     *samples_since_end += 1;
                     *samples_since_start += 1;
                 } else {
                     self.state = MeasurementState::Done(MeasurementResult {
                         duration_micros: *duration_micros,
+                        integrated_duration_micros: *integrated_duration_micros,
                         fall_buffer: fall_buffer.clone(),
                         samples_since_start: *samples_since_start,
                         samples_since_end: *samples_since_end,

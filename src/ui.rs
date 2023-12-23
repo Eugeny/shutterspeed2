@@ -3,6 +3,7 @@ use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Pixel;
+use micromath::F32Ext;
 use stm32f4xx_hal::pac::SPI1;
 use stm32f4xx_hal::spi::Spi;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
@@ -13,9 +14,12 @@ use crate::display::Display;
 use crate::measurement::{CalibrationState, MeasurementResult};
 use crate::util::EString;
 
-const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
+// const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
 const SMALL_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_profont29_mr>();
-const DIGIT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
+const TINY_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_profont17_mr>();
+const LARGE_DIGIT_FONT: FontRenderer =
+    FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
+const LARGE_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mr>();
 
 pub struct ResultsUiState {
     pub calibration: CalibrationState,
@@ -92,12 +96,12 @@ pub fn draw_measuring_ui(_display: &mut Display<Spi<SPI1>>) {}
 pub fn init_results_ui(display: &mut Display<Spi<SPI1>>) {
     display.clear();
 
-    TEXT_FONT
-        .render(
-            "Results",
-            Point::new(50, 10),
+    SMALL_FONT
+        .render_aligned(
+            " RESULTS ",
+            Point::new(display.width() as i32 / 2, 0),
             VerticalPosition::Top,
-            // FontColor::Transparent( Rgb565::RED),
+            HorizontalAlignment::Center,
             FontColor::WithBackground {
                 bg: Rgb565::GREEN,
                 fg: Rgb565::BLACK,
@@ -105,58 +109,39 @@ pub fn init_results_ui(display: &mut Display<Spi<SPI1>>) {
             &mut **display,
         )
         .unwrap();
-
-    // SMALL_FONT
-    //     .render(
-    //         "Calibrated to:",
-    //         Point::new(50, 50),
-    //         VerticalPosition::Top,
-    //         // FontColor::Transparent( Rgb565::RED),
-    //         FontColor::WithBackground {
-    //             fg: Rgb565::RED,
-    //             bg: Rgb565::BLACK,
-    //         },
-    //         &mut **display,
-    //     )
-    //     .unwrap();
 }
 
 pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState) {
-    if let CalibrationState::Done(ref value) = state.calibration {
-        let mut s = EString::<128>::default();
-        s.clear();
-        let _ = uwrite!(s, "Calibrated: {}", value);
-        let _ = SMALL_FONT.render(
-            &s[..],
-            Point::new(20, 215),
-            VerticalPosition::Top,
-            FontColor::WithBackground {
-                fg: Rgb565::RED,
-                bg: Rgb565::BLACK,
-            },
-            &mut **display,
-        );
-    }
-
     {
+        let duration_micros = state.result.integrated_duration_micros;
         let mut s = EString::<128>::default();
         s.clear();
-        if state.result.duration_micros < 500_000 {
+        if duration_micros < 500_000 {
             let _ = uwrite!(s, "1/");
-            _write_fraction(
-                &mut s,
-                1_000_000 as f32 / state.result.duration_micros as f32,
-            );
+            _write_fraction(&mut s, 1_000_000 as f32 / duration_micros as f32);
         } else {
-            let _ = _write_fraction(
-                &mut s,
-                state.result.duration_micros as f32 / 1_000_000 as f32,
-            );
+            let _ = _write_fraction(&mut s, duration_micros as f32 / 1_000_000 as f32);
         }
         let _ = uwrite!(s, " s");
+        let _ = LARGE_FONT.render(
+            &s[..],
+            Point::new(20, 110),
+            VerticalPosition::Top,
+            FontColor::WithBackground {
+                fg: Rgb565::WHITE,
+                bg: Rgb565::BLACK,
+            },
+            &mut **display,
+        );
+    }
+
+    {
+        let mut s = EString::<128>::default();
+        s.clear();
+        let _ = uwrite!(s, "{} us exposure", state.result.integrated_duration_micros);
         let _ = SMALL_FONT.render(
             &s[..],
-            Point::new(20, 185),
+            Point::new(20, 170),
             VerticalPosition::Top,
             FontColor::WithBackground {
                 fg: Rgb565::RED,
@@ -169,10 +154,10 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
     {
         let mut s = EString::<128>::default();
         s.clear();
-        let _ = uwrite!(s, "~ {} us", state.result.duration_micros);
-        let _ = SMALL_FONT.render(
+        let _ = uwrite!(s, "{} us start to end", state.result.duration_micros,);
+        let _ = TINY_FONT.render(
             &s[..],
-            Point::new(20, 155),
+            Point::new(20, 195),
             VerticalPosition::Top,
             FontColor::WithBackground {
                 fg: Rgb565::RED,
@@ -181,14 +166,13 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
             &mut **display,
         );
     }
-
     {
         let mut s = EString::<128>::default();
         s.clear();
-        let _ = uwrite!(s, "Duration: {} smp", state.result_samples);
-        let _ = SMALL_FONT.render(
+        let _ = uwrite!(s, "Captured {} samples", state.result_samples);
+        let _ = TINY_FONT.render(
             &s[..],
-            Point::new(20, 125),
+            Point::new(20, 215),
             VerticalPosition::Top,
             FontColor::WithBackground {
                 fg: Rgb565::RED,
@@ -202,15 +186,17 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
 }
 
 fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, graph_y: i32) {
+    let padding = 10;
+
     let chart = &result.fall_buffer;
     let len = chart.len();
-    let width = display.width();
-    let graph_rect = Rectangle::new(Point::new(0, graph_y), Size::new(width, 40));
+    let width = display.width() - padding * 2;
+    let graph_rect = Rectangle::new(Point::new(padding as i32, graph_y), Size::new(width, 40));
 
     let min = chart.iter().min().cloned().unwrap_or(0);
     let max = chart.iter().max().cloned().unwrap_or(0).max(min + 1);
 
-    let chunk_size = (len / width as usize).max(1);
+    let chunk_size = ((len as f32 / width as f32).ceil() as u32).max(1);
     let mut i = 0;
     let mut done = false;
     let mut iter = chart.oldest_ordered();
@@ -247,7 +233,7 @@ fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, grap
         display
             .fill_solid(
                 &Rectangle::new(Point::new(x, y), Size::new(2, 2)),
-                Rgb565::YELLOW,
+                Rgb565::CYAN,
             )
             .unwrap();
 
@@ -270,7 +256,7 @@ fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, grap
 pub fn init_debug_ui(display: &mut Display<Spi<SPI1>>) {
     display.clear();
 
-    TEXT_FONT
+    SMALL_FONT
         .render(
             "Current value:",
             Point::new(50, 50),
@@ -292,7 +278,7 @@ pub fn draw_debug_ui(display: &mut Display<Spi<SPI1>>, state: &mut DebugUiState)
     let variation = (state.max_adc_value - state.min_adc_value) / 2;
 
     let _ = uwrite!(s, "{} +-{}  ", state.adc_value, variation);
-    let res = DIGIT_FONT.render(
+    let res = LARGE_DIGIT_FONT.render(
         &s[..],
         Point::new(50, 80),
         VerticalPosition::Top,
