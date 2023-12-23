@@ -190,7 +190,7 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
 fn draw_chart(display: &mut Display<Spi<SPI1>>, result: &MeasurementResult, graph_y: i32) {
     let padding = 10;
 
-    let chart = &result.fall_buffer;
+    let chart = &result.sample_buffer;
     let len = chart.len();
     let width = display.width() - padding * 2;
     let graph_rect = Rectangle::new(Point::new(padding as i32, graph_y), Size::new(width, 40));

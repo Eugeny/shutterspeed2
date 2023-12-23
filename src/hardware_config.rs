@@ -6,6 +6,9 @@ pub const SAMPLE_RATE_HZ: u32 = 25_000_u32;
 pub const SYSCLK: u32 = 84_000_000;
 pub const HCLK: u32 = 42_000_000;
 
+pub const IPRIO_ADC_TIMER: u8 = 5;
+pub const IPRIO_BUTTONS: u8 = 4;
+
 
 // TIM2 <-> ADC1
 // TIM4 -> backlight PWM

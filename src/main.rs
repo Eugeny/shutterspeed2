@@ -6,11 +6,11 @@
 
 use panic_halt as _;
 mod display;
+mod format;
 mod hardware_config;
 mod measurement;
 mod ui;
 mod util;
-mod format;
 
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [SPI2, SPI3])]
 mod app {
@@ -22,7 +22,7 @@ mod app {
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
     use hal::gpio::{Edge, ErasedPin, Input, Speed};
-    use hal::pac::{self, ADC1, DMA2, SPI1, TIM2};
+    use hal::pac::{self, Interrupt, ADC1, DMA2, SPI1, TIM2};
     use hal::prelude::*;
     use hal::spi::Spi;
     use hal::timer::{CounterHz, Event, Flag};
@@ -32,7 +32,7 @@ mod app {
     use stm32f4xx_hal as hal;
 
     use crate::display::Display;
-    use crate::hardware_config::{self as hw_cfg, SYSCLK, HCLK, SAMPLE_TIME, SAMPLE_RATE_HZ};
+    use crate::hardware_config::{self as hw_cfg, HCLK, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK, IPRIO_ADC_TIMER};
     use crate::measurement::{CalibrationState, Measurement};
     use crate::ui::{
         draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui, init_calibrating_ui,
@@ -79,18 +79,6 @@ mod app {
         let mut dp: pac::Peripherals = cx.device;
 
         let mut syscfg = dp.SYSCFG.constrain();
-
-        // // Clock Configuration
-        // let rcc = dp.RCC.constrain();
-        // let clocks = rcc
-        //     .cfgr
-        //     .use_hse(8.MHz())
-        //     .sysclk(84.MHz())
-        //     .hclk(84.MHz())
-        //     .require_pll48clk()
-        //     .pclk2(21.MHz())
-        //     .freeze();
-        // dp.RCC.apb2enr.write(|w| w.syscfgen().enabled());
 
         let rcc = dp.RCC.constrain();
         let clocks = rcc
@@ -145,6 +133,10 @@ mod app {
         let mut timer = dp.TIM2.counter_hz(&clocks);
         timer.listen(Event::Update);
         timer.start(SAMPLE_RATE_HZ.Hz()).unwrap();
+
+        unsafe {
+            cx.core.NVIC.set_priority(Interrupt::TIM2, IPRIO_ADC_TIMER);
+        }
 
         //----
 

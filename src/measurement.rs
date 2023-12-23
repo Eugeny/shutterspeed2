@@ -55,8 +55,7 @@ const MARGIN_SAMPLES: usize = 200;
 pub struct MeasurementResult {
     pub duration_micros: u64,
     pub integrated_duration_micros: u64,
-    // pub rise_buffer: RingBuffer,
-    pub fall_buffer: RingBuffer,
+    pub sample_buffer: RingBuffer,
     pub samples_since_start: usize,
     pub samples_since_end: usize,
 }
@@ -67,8 +66,7 @@ pub enum MeasurementState<M: LaxMonotonic> {
     },
     Measuring {
         since: M::Instant,
-        // rise_buffer: RingBuffer,
-        fall_buffer: RingBuffer,
+        sample_buffer: RingBuffer,
         samples_since_start: usize,
         peak: u16,
         integrated: u64, // samples x (abs value)
@@ -78,7 +76,7 @@ pub enum MeasurementState<M: LaxMonotonic> {
         samples_since_end: usize,
         duration_micros: u64,
         integrated_duration_micros: u64,
-        fall_buffer: RingBuffer,
+        sample_buffer: RingBuffer,
     },
     Done(MeasurementResult),
 }
@@ -123,8 +121,8 @@ impl<M: LaxMonotonic> Measurement<M> {
             MeasurementState::Idle { pre_buffer } => {
                 pre_buffer.write(value);
                 if value > self.expected_high {
-                    let mut fall_buffer = RingBuffer::new();
-                    fall_buffer.extend(
+                    let mut sample_buffer = RingBuffer::new();
+                    sample_buffer.extend(
                         pre_buffer
                             .oldest_ordered()
                             .skip(pre_buffer.len() - MARGIN_SAMPLES),
@@ -133,7 +131,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                     self.state = MeasurementState::Measuring {
                         since: M::now(),
                         // rise_buffer: RingBuffer::new(),
-                        fall_buffer,
+                        sample_buffer,
                         peak: value,
                         samples_since_start: 0,
                         integrated: 0,
@@ -143,7 +141,7 @@ impl<M: LaxMonotonic> Measurement<M> {
             }
             MeasurementState::Measuring {
                 ref since,
-                ref mut fall_buffer,
+                ref mut sample_buffer,
                 ref mut samples_since_start,
                 ref mut integrated,
                 ref mut peak,
@@ -166,7 +164,7 @@ impl<M: LaxMonotonic> Measurement<M> {
 
                     self.state = MeasurementState::Trailing {
                         duration_micros,
-                        fall_buffer: fall_buffer.clone(),
+                        sample_buffer: sample_buffer.clone(),
                         samples_since_start: *samples_since_start,
                         samples_since_end: 0,
                         integrated_duration_micros,
@@ -179,24 +177,43 @@ impl<M: LaxMonotonic> Measurement<M> {
                 *integrated += value as u64;
                 *peak = (*peak).max(value);
 
-                fall_buffer.write(value);
+                sample_buffer.write(value);
             }
             MeasurementState::Trailing {
                 duration_micros,
-                fall_buffer,
+                sample_buffer,
                 ref mut samples_since_start,
                 ref mut samples_since_end,
                 integrated_duration_micros,
             } => {
                 if *samples_since_end < MARGIN_SAMPLES {
-                    fall_buffer.write(value);
+                    sample_buffer.write(value);
                     *samples_since_end += 1;
                     *samples_since_start += 1;
                 } else {
+                    // Reduce margins for short exposures
+                    let final_margin =
+                        MARGIN_SAMPLES.min(*samples_since_start - *samples_since_end);
+
+                    let buffer_len = sample_buffer.len();
+                    let iter = sample_buffer.oldest_ordered().into_iter();
+
+                    let end_index = buffer_len - *samples_since_end;
+                    let iter = iter.take(end_index + final_margin);
+
+                    let start_index = buffer_len - *samples_since_start;
+                    let iter = iter.skip((start_index - final_margin).max(0));
+
+                    let mut final_buffer = RingBuffer::new();
+                    final_buffer.extend(iter);
+
+                    *samples_since_start -= MARGIN_SAMPLES - final_margin;
+                    *samples_since_end -= MARGIN_SAMPLES - final_margin;
+
                     self.state = MeasurementState::Done(MeasurementResult {
                         duration_micros: *duration_micros,
                         integrated_duration_micros: *integrated_duration_micros,
-                        fall_buffer: fall_buffer.clone(),
+                        sample_buffer: final_buffer,
                         samples_since_start: *samples_since_start,
                         samples_since_end: *samples_since_end,
                     });
