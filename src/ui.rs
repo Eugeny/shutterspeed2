@@ -14,10 +14,7 @@ use heapless::HistoryBuffer;
 use micromath::F32Ext;
 use rtic_monotonics::systick::Systick;
 use stm32f4xx_hal as hal;
-use u8g2_fonts::fonts::{
-    u8g2_font_profont17_mr, u8g2_font_profont29_mr, u8g2_font_spleen16x32_mr,
-    u8g2_font_spleen32x64_mn, u8g2_font_spleen32x64_mr,
-};
+use u8g2_fonts::fonts::{u8g2_font_profont17_mr, u8g2_font_profont29_mr, u8g2_font_spleen32x64_mn};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::{FontRenderer, U8g2TextStyle};
 use ufmt::uwrite;
@@ -31,7 +28,6 @@ use crate::util::{EString, LaxMonotonic};
 const SMALL_FONT: FontRenderer = FontRenderer::new::<u8g2_font_profont29_mr>();
 const TINY_FONT: FontRenderer = FontRenderer::new::<u8g2_font_profont17_mr>();
 const LARGE_DIGIT_FONT: FontRenderer = FontRenderer::new::<u8g2_font_spleen32x64_mn>();
-const LARGE_FONT: FontRenderer = FontRenderer::new::<u8g2_font_spleen16x32_mr>();
 
 pub struct ResultsUiState {
     pub calibration: CalibrationState,
@@ -260,14 +256,14 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
 
     draw_speed_ruler(
         display,
-        Point::new(0, 210),
+        Point::new(0, 215),
         state.result.integrated_duration_micros as f32 / 1_000_000.0,
     );
 
     draw_chart(
         display,
         &state.result.sample_buffer,
-        45,
+        25,
         Some(state.result.samples_since_start),
         Some(state.result.samples_since_end),
         false,
@@ -341,7 +337,6 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
 
     for duration in known_durations.iter() {
         let x = origin.x + overall_x_offset + duration_to_x_offset(*duration);
-        // let x = origin.x + (idx as i32 * 30);
         let y = origin.y;
         let mut s = EString::<128>::default();
         s.clear();
@@ -354,7 +349,13 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
         };
         if best_match == *duration {
             color = Rgb565::MAGENTA;
-            draw_triangle(display, Point::new(x, y - ruler_height - 1), 10, color);
+            draw_triangle(
+                display,
+                Point::new(x, y - ruler_height - 1),
+                10,
+                false,
+                color,
+            );
         }
 
         let label_size = TINY_FONT
@@ -401,6 +402,7 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
         display,
         Point::new(overall_x_offset + actual_x - 2, origin.y - ruler_height - 1),
         12,
+        false,
         Rgb565::WHITE,
     );
 }
@@ -486,11 +488,19 @@ fn draw_chart<const LEN: usize>(
         i += 1;
     }
 
+    let graph_bottom = graph_rect.bottom_right().unwrap().y;
     if let Some(samples_since_start) = samples_since_start {
         let start_x = chart.len() - samples_since_start;
         if let Some(start_y) = chart.get(start_x) {
             let (x, y) = xy_to_coords(start_x as u16, *start_y);
-            draw_cross(display.deref_mut(), Point::new(x, y), 5, Rgb565::GREEN);
+            draw_cross(display.deref_mut(), Point::new(x, y), 2, Rgb565::GREEN);
+            draw_triangle(
+                display,
+                Point::new(x, graph_bottom),
+                10,
+                true,
+                Rgb565::GREEN,
+            );
         }
     }
 
@@ -498,7 +508,8 @@ fn draw_chart<const LEN: usize>(
         let end_x = chart.len() - samples_since_end;
         if let Some(end_y) = chart.get(end_x) {
             let (x, y) = xy_to_coords(end_x as u16, *end_y);
-            draw_cross(display.deref_mut(), Point::new(x, y), 5, Rgb565::YELLOW);
+            draw_cross(display.deref_mut(), Point::new(x, y), 2, Rgb565::RED);
+            draw_triangle(display, Point::new(x, graph_bottom), 10, true, Rgb565::RED);
         }
     }
 }
@@ -621,20 +632,29 @@ pub fn draw_cross<D: AppDrawTarget>(display: &mut D, point: Point, size: u32, co
     }
 }
 
-pub fn draw_triangle(display: &mut Display<Spi<SPI1>>, point: Point, size: u32, color: Rgb565) {
+pub fn draw_triangle(
+    display: &mut Display<Spi<SPI1>>,
+    point: Point,
+    size: u32,
+    upside_down: bool,
+    color: Rgb565,
+) {
+    let sy = if upside_down { -1 } else { 1 };
     for offset in THICKENING_OFFSETS {
         for dir in [-1, 1] {
             display
-                .draw_iter(
-                    (0..size as i32)
-                        .map(|i| Pixel(offset + Point::new(point.x + dir * i, point.y - i), color)),
-                )
+                .draw_iter((0..size as i32).map(|i| {
+                    Pixel(
+                        offset + Point::new(point.x + dir * i, point.y - i * sy),
+                        color,
+                    )
+                }))
                 .unwrap();
         }
         display
             .draw_iter((-(size as i32)..size as i32).map(|i| {
                 Pixel(
-                    offset + Point::new(point.x + i, point.y - size as i32),
+                    offset + Point::new(point.x + i, point.y - size as i32 * sy),
                     color,
                 )
             }))
