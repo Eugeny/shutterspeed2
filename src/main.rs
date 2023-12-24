@@ -32,14 +32,12 @@ mod app {
     use stm32f4xx_hal as hal;
 
     use crate::display::Display;
-    use crate::hardware_config::{
-        self as hw_cfg, HCLK, IPRIO_ADC_TIMER, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK,
-    };
+    use crate::hardware_config::{HCLK, IPRIO_ADC_TIMER, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK};
     use crate::measurement::{CalibrationState, Measurement};
     use crate::ui::{
-        draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui, init_calibrating_ui,
-        init_debug_ui, init_measuring_ui, init_results_ui, init_start_ui, DebugUiState,
-        ResultsUiState,
+        draw_boot_screen, draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui,
+        init_calibrating_ui, init_debug_ui, init_measuring_ui, init_results_ui, init_start_ui,
+        DebugUiState, ResultsUiState,
     };
     use crate::util::CycleCounterClock;
 
@@ -80,6 +78,12 @@ mod app {
     fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut dp: pac::Peripherals = cx.device;
 
+        let gpioa = dp.GPIOA.split();
+        let gpiob = dp.GPIOB.split();
+        let gpioc = dp.GPIOC.split();
+        let mut backlight_pin = gpiob.pb9.into_push_pull_output();
+        backlight_pin.set_low();
+
         // Workaround 1 enable prefetch
         // {
         //     dp.FLASH
@@ -87,15 +91,15 @@ mod app {
         //         .write(|w| w.prften().enabled().icen().enabled().dcen().enabled());
         // }
 
-        // // Workaround 2 AN4073 4.1 reduce ADC crosstalk
-        // {
-        //     dp.PWR.cr.write(|w| w.adcdc1().set_bit());
-        // }
-
-        // Workaround 3 AN4073 4.1 reduce ADC crosstalk
+        // Workaround 2 AN4073 4.1 reduce ADC crosstalk
         {
-            dp.SYSCFG.pmc.write(|x| x.adc1dc2().set_bit())
+            dp.PWR.cr.write(|w| w.adcdc1().set_bit());
         }
+
+        // // Workaround 3 AN4073 4.1 reduce ADC crosstalk
+        // {
+        //     dp.SYSCFG.pmc.write(|x| x.adc1dc2().set_bit())
+        // }
 
         let mut syscfg = dp.SYSCFG.constrain();
 
@@ -115,10 +119,6 @@ mod app {
         let systick_token = create_systick_token!();
         Systick::start(cx.core.SYST, SYSCLK, systick_token);
 
-        let gpioa = dp.GPIOA.split();
-        let gpiob = dp.GPIOB.split();
-        let gpioc = dp.GPIOC.split();
-
         let mut delay = dp.TIM3.delay_us(&clocks);
 
         let mut led_pin = gpioc.pc13.into_push_pull_output();
@@ -130,7 +130,7 @@ mod app {
             .dma(Dma::Continuous)
             .scan(Scan::Disabled)
             .clock(Clock::Pclk2_div_6)
-            .resolution(Resolution::Twelve);
+            .resolution(Resolution::Eight);
 
         let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
         adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
@@ -159,12 +159,6 @@ mod app {
 
         //----
 
-        let mut pwm = dp
-            .TIM4
-            .pwm_hz(hal::timer::Channel4::new(gpiob.pb9), 100.Hz(), &clocks);
-        pwm.enable(hal::timer::Channel::C4);
-        pwm.set_duty(hal::timer::Channel::C4, 0);
-
         let display = {
             let mut dc_pin = gpioa.pa8.into_push_pull_output();
             let mut rst_pin = gpioa.pa11.into_push_pull_output();
@@ -188,10 +182,7 @@ mod app {
             display
         };
 
-        pwm.set_duty(
-            hal::timer::Channel::C4,
-            (pwm.get_max_duty() as f32 * hw_cfg::DISPLAY_BRIGHTNESS) as u16,
-        );
+        backlight_pin.set_high();
 
         let mut mode_button_pin = gpioa.pa1.into_pull_down_input();
         mode_button_pin.make_interrupt_source(&mut syscfg);
@@ -301,6 +292,17 @@ mod app {
 
     #[task(shared=[app_mode, adc_value, calibration_state, measurement], priority=2)]
     async fn measure_task(mut ctx: measure_task::Context) {
+        // DEBUG
+        // {
+        //     ctx.shared.app_mode.lock(|app_mode| {
+        //         *app_mode = AppMode::Results;
+        //     });
+        //     ctx.shared.measurement.lock(|measurement| {
+        //         *measurement = Measurement::new_debug_duration(1200);
+        //     });
+        //     return;
+        // }
+
         ctx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
@@ -320,12 +322,10 @@ mod app {
         });
 
         loop {
-            ctx.shared.app_mode.lock(|app_mode| {
-                if *app_mode != AppMode::Measure {
-                    // Cancelled
-                    return;
-                }
-            });
+            if ctx.shared.app_mode.lock(|app_mode| *app_mode) != AppMode::Measure {
+                // Cancelled
+                return;
+            }
 
             if ctx
                 .shared
@@ -346,34 +346,35 @@ mod app {
     #[task(local=[display, adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_state, measurement], priority=1)]
     async fn display_task(mut ctx: display_task::Context) {
         let local = ctx.local;
-        init_calibrating_ui(local.display);
+        draw_boot_screen(local.display).await;
 
         let mut mode = AppMode::None;
 
         loop {
             let now = Systick::now();
-            ctx.shared.app_mode.lock(|app_mode| {
+
+            if let Some(changed_mode) = ctx.shared.app_mode.lock(|app_mode| {
                 if *app_mode != mode {
                     mode = *app_mode;
-                    match mode {
-                        AppMode::Calibrating => init_calibrating_ui(local.display),
-                        AppMode::Measure => init_measuring_ui(local.display),
-                        AppMode::Debug => init_debug_ui(local.display),
-                        AppMode::Results => init_results_ui(local.display),
-                        AppMode::Start => init_start_ui(local.display),
-                        AppMode::None => {}
-                    };
+                    return Some(mode);
                 }
-            });
+                None
+            }) {
+                match changed_mode {
+                    AppMode::Calibrating => init_calibrating_ui(local.display).await,
+                    AppMode::Measure => init_measuring_ui(local.display).await,
+                    AppMode::Debug => init_debug_ui(local.display),
+                    AppMode::Results => init_results_ui(local.display).await,
+                    AppMode::Start => init_start_ui(local.display).await,
+                    AppMode::None => (),
+                };
+            }
 
             match mode {
                 AppMode::Debug => {
                     let adc_value = ctx.shared.adc_value.lock(|adc_value| *adc_value);
                     local.adc_history.write(adc_value);
                     local.adc_avg_window.write(adc_value);
-
-                    // let avg_adc_value = local.adc_avg_window.iter().sum::<u16>()
-                    //     / local.adc_avg_window.len() as u16;
 
                     let min_adc_value = *local.adc_avg_window.iter().min().unwrap_or(&0);
                     let max_adc_value = *local.adc_avg_window.iter().max().unwrap_or(&0);
@@ -406,16 +407,11 @@ mod app {
                         .measurement
                         .lock(|measurement| measurement.result().cloned())
                         .unwrap();
-                    let result_samples = ctx
-                        .shared
-                        .measurement
-                        .lock(|measurement| measurement.result_samples());
                     draw_results_ui(
                         local.display,
                         &ResultsUiState {
                             calibration,
                             result,
-                            result_samples,
                         },
                     )
                 }

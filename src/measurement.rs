@@ -86,26 +86,36 @@ pub struct Measurement<M: LaxMonotonic> {
 
     sample_ctr: u32,
 
-    sample_start: u32,
-    sample_end: u32,
-
     expected_high: u16,
     level_low: u16,
 }
 
 impl<M: LaxMonotonic> Measurement<M> {
     pub fn new(calibration_value: u16) -> Self {
-        let threshold_low = 1.5;
-        let threshold_high = 2.0;
+        let threshold_low = 1.3;
+        let threshold_high = 1.5;
         Self {
             state: MeasurementState::Idle {
                 pre_buffer: RingPreBuffer::new(),
             },
             sample_ctr: 0,
-            sample_end: 0,
-            sample_start: 0,
             level_low: (calibration_value as f32 * threshold_low) as u16,
             expected_high: (calibration_value as f32 * threshold_high) as u16,
+        }
+    }
+
+    pub fn new_debug_duration(ms: u32) -> Self {
+        Self {
+            state: MeasurementState::Done(MeasurementResult {
+                duration_micros: ms as u64 * 1000,
+                integrated_duration_micros: ms as u64 * 1000,
+                sample_buffer: RingBuffer::new(),
+                samples_since_start: 0,
+                samples_since_end: 0,
+            }),
+            sample_ctr: 0,
+            level_low: 0,
+            expected_high: 1,
         }
     }
 
@@ -135,7 +145,6 @@ impl<M: LaxMonotonic> Measurement<M> {
                         samples_since_start: 0,
                         integrated: 0,
                     };
-                    self.sample_start = self.sample_ctr;
                 }
             }
             MeasurementState::Measuring {
@@ -147,7 +156,6 @@ impl<M: LaxMonotonic> Measurement<M> {
             } => {
                 if value < self.level_low {
                     let t_end = M::now();
-                    self.sample_end = self.sample_ctr;
 
                     // remove area below threshold
                     let integrated_value_samples =
@@ -227,13 +235,6 @@ impl<M: LaxMonotonic> Measurement<M> {
         match self.state {
             MeasurementState::Done(ref result) => Some(result),
             _ => None,
-        }
-    }
-
-    pub fn result_samples(&self) -> u32 {
-        match self.state {
-            MeasurementState::Done(_) => self.sample_end - self.sample_start,
-            _ => 0,
         }
     }
 }
