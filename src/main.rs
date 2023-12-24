@@ -32,7 +32,9 @@ mod app {
     use stm32f4xx_hal as hal;
 
     use crate::display::Display;
-    use crate::hardware_config::{self as hw_cfg, HCLK, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK, IPRIO_ADC_TIMER};
+    use crate::hardware_config::{
+        self as hw_cfg, HCLK, IPRIO_ADC_TIMER, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK,
+    };
     use crate::measurement::{CalibrationState, Measurement};
     use crate::ui::{
         draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui, init_calibrating_ui,
@@ -78,17 +80,34 @@ mod app {
     fn init(mut cx: init::Context) -> (Shared, Local) {
         let mut dp: pac::Peripherals = cx.device;
 
+        // Workaround 1 enable prefetch
+        // {
+        //     dp.FLASH
+        //         .acr
+        //         .write(|w| w.prften().enabled().icen().enabled().dcen().enabled());
+        // }
+
+        // // Workaround 2 AN4073 4.1 reduce ADC crosstalk
+        // {
+        //     dp.PWR.cr.write(|w| w.adcdc1().set_bit());
+        // }
+
+        // Workaround 3 AN4073 4.1 reduce ADC crosstalk
+        {
+            dp.SYSCFG.pmc.write(|x| x.adc1dc2().set_bit())
+        }
+
         let mut syscfg = dp.SYSCFG.constrain();
 
         let rcc = dp.RCC.constrain();
         let clocks = rcc
             .cfgr
             .sysclk(SYSCLK.Hz())
-            .require_pll48clk()
+            // .require_pll48clk()
             .hclk(HCLK.MHz())
             .use_hse(25.MHz())
-            .pclk1(10.MHz())
-            .pclk2(10.MHz())
+            .pclk1(40.MHz())
+            .pclk2(40.MHz())
             .freeze();
 
         CYCCNTClock::<SYSCLK>::init(&mut cx.core.DCB, cx.core.DWT);
@@ -208,7 +227,7 @@ mod app {
         )
     }
 
-    #[task(binds = TIM2, shared = [transfer], local = [timer])]
+    #[task(binds = TIM2, shared = [transfer], local = [timer], priority = 3)]
     fn adcstart(mut cx: adcstart::Context) {
         cx.shared.transfer.lock(|transfer| {
             transfer.start(|adc| {
@@ -316,7 +335,7 @@ mod app {
                 break;
             }
 
-            Systick::delay(10.millis().into()).await;
+            Systick::delay(100.millis().into()).await;
         }
 
         ctx.shared.app_mode.lock(|app_mode| {
