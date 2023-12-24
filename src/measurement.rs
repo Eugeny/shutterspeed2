@@ -170,7 +170,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                 {
                     // Compactify samples in the buffer by discarding every 2nd item
                     let mut new_buffer = RingBuffer::new();
-                    let mut iter = sample_buffer.into_iter();
+                    let mut iter = sample_buffer.iter();
                     while let Some(item) = iter.next() {
                         new_buffer.write(*item);
                         // Skip every other one
@@ -233,7 +233,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                         MARGIN_SAMPLES.min(*samples_since_start - *samples_since_end);
 
                     let buffer_len = sample_buffer.len();
-                    let iter = sample_buffer.oldest_ordered().into_iter();
+                    let iter = sample_buffer.oldest_ordered();
 
                     let end_index = buffer_len - *samples_since_end;
                     let iter = iter.take(end_index + final_margin);
@@ -258,7 +258,6 @@ impl<M: LaxMonotonic> Measurement<M> {
                         samples_since_start: *samples_since_start,
                         samples_since_end: *samples_since_end,
                     });
-                    return;
                 }
             }
             MeasurementState::Done { .. } => (),

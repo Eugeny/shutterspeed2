@@ -119,9 +119,9 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
         s.clear();
         if duration_micros < 500_000 {
             let _ = uwrite!(s, "1/");
-            write_fraction(&mut s, 1_000_000 as f32 / duration_micros as f32);
+            write_fraction(&mut s, 1_000_000_f32 / duration_micros as f32);
         } else {
-            write_fraction(&mut s, duration_micros as f32 / 1_000_000 as f32);
+            write_fraction(&mut s, duration_micros as f32 / 1_000_000_f32);
         }
         let _ = uwrite!(s, " s");
         let _ = LARGE_FONT.render(
@@ -139,7 +139,7 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
     {
         let mut s = EString::<128>::default();
         s.clear();
-        let _ = write_micros(&mut s, state.result.integrated_duration_micros);
+        write_micros(&mut s, state.result.integrated_duration_micros);
         let _ = uwrite!(s, " exposure");
         let _ = TINY_FONT.render(
             &s[..],
@@ -363,7 +363,7 @@ fn draw_chart<const LEN: usize>(
         let y = y * graph_rect.size.height as i32 / (max - min) as i32;
 
         let x = x as i32 + graph_rect.top_left.x;
-        let y = graph_rect.bottom_right().unwrap().y as i32 - y;
+        let y = graph_rect.bottom_right().unwrap().y - y;
         (x, y)
     };
 
@@ -389,13 +389,13 @@ fn draw_chart<const LEN: usize>(
             > chart.len() as u16 - samples_since_start.unwrap_or(0) as u16
             && sample_index < chart.len() as u16 - samples_since_end.unwrap_or(0) as u16;
 
-        let (x, y) = xy_to_coords(sample_index as u16, avg);
+        let (x, y) = xy_to_coords(sample_index, avg);
         if is_integrated {
             display
                 .fill_solid(
                     &Rectangle::with_corners(
                         Point::new(x, y),
-                        Point::new(x, graph_rect.bottom_right().unwrap().y as i32),
+                        Point::new(x, graph_rect.bottom_right().unwrap().y),
                     ),
                     Rgb565::CSS_DARK_SLATE_BLUE,
                 )
@@ -412,7 +412,7 @@ fn draw_chart<const LEN: usize>(
     }
 
     if let Some(samples_since_start) = samples_since_start {
-        let start_x = chart.len() - samples_since_start as usize;
+        let start_x = chart.len() - samples_since_start;
         if let Some(start_y) = chart.get(start_x) {
             let (x, y) = xy_to_coords(start_x as u16, *start_y);
             draw_cross(display, Point::new(x, y), 5, Rgb565::GREEN);
@@ -420,7 +420,7 @@ fn draw_chart<const LEN: usize>(
     }
 
     if let Some(samples_since_end) = samples_since_end {
-        let end_x = chart.len() - samples_since_end as usize;
+        let end_x = chart.len() - samples_since_end;
         if let Some(end_y) = chart.get(end_x) {
             let (x, y) = xy_to_coords(end_x as u16, *end_y);
             draw_cross(display, Point::new(x, y), 5, Rgb565::YELLOW);
@@ -534,7 +534,6 @@ pub fn draw_cross(display: &mut Display<Spi<SPI1>>, point: Point, size: u32, col
             display
                 .draw_iter(
                     (-(size as i32)..size as i32)
-                        .into_iter()
                         .map(|i| Pixel(offset + Point::new(point.x + i, point.y + i * dir), color)),
                 )
                 .unwrap();
@@ -548,13 +547,12 @@ pub fn draw_triangle(display: &mut Display<Spi<SPI1>>, point: Point, size: u32, 
             display
                 .draw_iter(
                     (0..size as i32)
-                        .into_iter()
                         .map(|i| Pixel(offset + Point::new(point.x + dir * i, point.y - i), color)),
                 )
                 .unwrap();
         }
         display
-            .draw_iter((-(size as i32)..size as i32).into_iter().map(|i| {
+            .draw_iter((-(size as i32)..size as i32).map(|i| {
                 Pixel(
                     offset + Point::new(point.x + i, point.y - size as i32),
                     color,

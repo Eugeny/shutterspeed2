@@ -310,7 +310,7 @@ mod app {
             calibration_state.begin();
         });
 
-        Systick::delay(1.secs().into()).await;
+        Systick::delay(1.secs()).await;
 
         let calibration_value = ctx.shared.calibration_state.lock(|state| state.finish());
         ctx.shared.measurement.lock(|measurement| {
@@ -335,7 +335,7 @@ mod app {
                 break;
             }
 
-            Systick::delay(100.millis().into()).await;
+            Systick::delay(100.millis()).await;
         }
 
         ctx.shared.app_mode.lock(|app_mode| {
