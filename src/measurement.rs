@@ -47,7 +47,7 @@ impl CalibrationState {
 }
 
 pub type RingPreBuffer = HistoryBuffer<u16, 1000>;
-pub type RingBuffer = HistoryBuffer<u16, 5000>;
+pub type RingBuffer = HistoryBuffer<u16, 1000>;
 
 const MARGIN_SAMPLES: usize = 200;
 
@@ -70,6 +70,8 @@ pub enum MeasurementState<M: LaxMonotonic> {
         samples_since_start: usize,
         peak: u16,
         integrated: u64, // samples x (abs value)
+        sample_rate: u32,
+        sample_rate_counter: u32,
     },
     Trailing {
         samples_since_start: usize,
@@ -144,6 +146,8 @@ impl<M: LaxMonotonic> Measurement<M> {
                         peak: value,
                         samples_since_start: 0,
                         integrated: 0,
+                        sample_rate: 1,
+                        sample_rate_counter: 0,
                     };
                 }
             }
@@ -153,7 +157,33 @@ impl<M: LaxMonotonic> Measurement<M> {
                 ref mut samples_since_start,
                 ref mut integrated,
                 ref mut peak,
+                ref mut sample_rate,
+                ref mut sample_rate_counter,
             } => {
+                *sample_rate_counter = (*sample_rate_counter + 1) % *sample_rate;
+                if *sample_rate_counter != 0 {
+                    // Discard sample
+                    return;
+                }
+
+                if *samples_since_start + MARGIN_SAMPLES > sample_buffer.capacity() - MARGIN_SAMPLES
+                {
+                    // Compactify samples in the buffer by discarding every 2nd item
+                    let mut new_buffer = RingBuffer::new();
+                    let mut iter = sample_buffer.into_iter();
+                    while let Some(item) = iter.next() {
+                        new_buffer.write(*item);
+                        // Skip every other one
+                        if iter.next().is_none() {
+                            break;
+                        }
+                    }
+                    *sample_buffer = new_buffer;
+                    *samples_since_start /= 2;
+                    *integrated /= 2;
+                    *sample_rate *= 2;
+                }
+
                 if value < self.level_low {
                     let t_end = M::now();
 
@@ -208,8 +238,12 @@ impl<M: LaxMonotonic> Measurement<M> {
                     let end_index = buffer_len - *samples_since_end;
                     let iter = iter.take(end_index + final_margin);
 
-                    let start_index = buffer_len - *samples_since_start;
-                    let iter = iter.skip((start_index - final_margin).max(0));
+                    let start_index = buffer_len.checked_sub(*samples_since_start);
+                    let iter = iter.skip(
+                        start_index
+                            .and_then(|x| x.checked_sub(final_margin))
+                            .unwrap_or(0),
+                    );
 
                     let mut final_buffer = RingBuffer::new();
                     final_buffer.extend(iter);

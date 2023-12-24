@@ -169,23 +169,24 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
     //     );
     // }
     // {
-    //     let mut s = EString::<128>::default();
-    //     s.clear();
-    //     let _ = uwrite!(
-    //         s,
-    //         "Captured {} samples",
-    //         state.result.samples_since_end - state.result.samples_since_start
-    //     );
-    //     let _ = TINY_FONT.render(
-    //         &s[..],
-    //         Point::new(20, 215),
-    //         VerticalPosition::Top,
-    //         FontColor::WithBackground {
-    //             fg: Rgb565::RED,
-    //             bg: Rgb565::BLACK,
-    //         },
-    //         &mut **display,
-    //     );
+    // let mut s = EString::<128>::default();
+    // s.clear();
+    // let _ = uwrite!(
+    //     s,
+    //     "Captured {} samples",
+    //     state.result.sample_buffer.len(),
+    //     // state.result.samples_since_end - state.result.samples_since_start
+    // );
+    // let _ = TINY_FONT.render(
+    //     &s[..],
+    //     Point::new(20, 215),
+    //     VerticalPosition::Top,
+    //     FontColor::WithBackground {
+    //         fg: Rgb565::RED,
+    //         bg: Rgb565::BLACK,
+    //     },
+    //     &mut **display,
+    // );
     // }
 
     draw_speed_ruler(
@@ -383,11 +384,27 @@ fn draw_chart<const LEN: usize>(
         }
         let avg: u16 = sum / count;
 
-        let (x, y) = xy_to_coords(i * chunk_size as u16, avg);
+        let sample_index = i * chunk_size as u16;
+        let is_integrated = sample_index
+            > chart.len() as u16 - samples_since_start.unwrap_or(0) as u16
+            && sample_index < chart.len() as u16 - samples_since_end.unwrap_or(0) as u16;
+
+        let (x, y) = xy_to_coords(sample_index as u16, avg);
+        if is_integrated {
+            display
+                .fill_solid(
+                    &Rectangle::with_corners(
+                        Point::new(x, y),
+                        Point::new(x, graph_rect.bottom_right().unwrap().y as i32),
+                    ),
+                    Rgb565::CSS_DARK_SLATE_BLUE,
+                )
+                .unwrap();
+        }
         display
             .fill_solid(
                 &Rectangle::new(Point::new(x, y), Size::new(2, 2)),
-                Rgb565::RED,
+                Rgb565::WHITE,
             )
             .unwrap();
 
