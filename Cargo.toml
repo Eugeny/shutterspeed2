@@ -20,7 +20,7 @@ embedded-time = "0.12.1"
 fugit = "0.3.7"
 ufmt = "0.2.0"
 heapless = "0.8.0"
-u8g2-fonts = "0.4.0"
+u8g2-fonts = { version = "0.4.0", features = ["embedded_graphics_textstyle"] }
 embedded-text = "0.7.0"
 rtic-monotonics = { version = "1.4.1", features = [
     "stm32f401cc",

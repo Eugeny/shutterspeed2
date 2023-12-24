@@ -1,8 +1,12 @@
+use core::ops::DerefMut;
+
 use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::geometry::{Point, Size};
+use embedded_graphics::geometry::{Dimensions, Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::primitives::Rectangle;
-use embedded_graphics::Pixel;
+use embedded_graphics::{Drawable, Pixel};
+use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
+use embedded_text::TextBox;
 use hal::pac::SPI1;
 use hal::prelude::*;
 use hal::spi::Spi;
@@ -10,21 +14,24 @@ use heapless::HistoryBuffer;
 use micromath::F32Ext;
 use rtic_monotonics::systick::Systick;
 use stm32f4xx_hal as hal;
+use u8g2_fonts::fonts::{
+    u8g2_font_profont17_mr, u8g2_font_profont29_mr, u8g2_font_spleen16x32_mr,
+    u8g2_font_spleen32x64_mn, u8g2_font_spleen32x64_mr,
+};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
-use u8g2_fonts::FontRenderer;
+use u8g2_fonts::{FontRenderer, U8g2TextStyle};
 use ufmt::uwrite;
 
-use crate::display::Display;
+use crate::display::{AppDrawTarget, Display};
 use crate::format::{write_fraction, write_micros};
 use crate::measurement::{CalibrationState, MeasurementResult};
 use crate::util::{EString, LaxMonotonic};
 
-// const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen16x32_me>();
-const SMALL_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_profont29_mr>();
-const TINY_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_profont17_mr>();
-const LARGE_DIGIT_FONT: FontRenderer =
-    FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mn>();
-const LARGE_FONT: FontRenderer = FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_spleen32x64_mr>();
+// const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_font_spleen16x32_me>();
+const SMALL_FONT: FontRenderer = FontRenderer::new::<u8g2_font_profont29_mr>();
+const TINY_FONT: FontRenderer = FontRenderer::new::<u8g2_font_profont17_mr>();
+const LARGE_DIGIT_FONT: FontRenderer = FontRenderer::new::<u8g2_font_spleen32x64_mn>();
+const LARGE_FONT: FontRenderer = FontRenderer::new::<u8g2_font_spleen16x32_mr>();
 
 pub struct ResultsUiState {
     pub calibration: CalibrationState,
@@ -52,7 +59,21 @@ pub async fn init_start_ui(display: &mut Display<Spi<SPI1>>) {
     .await;
 }
 
-pub fn draw_start_ui(_display: &mut Display<Spi<SPI1>>) {}
+pub fn draw_start_ui(display: &mut Display<Spi<SPI1>>) {
+    let t = (Systick::now() - <Systick as rtic_monotonics::Monotonic>::ZERO).to_millis() / 500;
+    let color = if t % 2 == 0 {
+        Rgb565::WHITE
+    } else {
+        Rgb565::BLACK
+    };
+    let center = display.bounding_box().center();
+    display
+        .fill_solid(
+            &Rectangle::with_center(center + Point::new(0, 40), Size::new(10, 10)),
+            color,
+        )
+        .unwrap();
+}
 
 pub async fn init_calibrating_ui(display: &mut Display<Spi<SPI1>>) {
     display.clear();
@@ -102,35 +123,83 @@ pub fn draw_measuring_ui(display: &mut Display<Spi<SPI1>>) {
 pub async fn init_results_ui(display: &mut Display<Spi<SPI1>>) {
     display.clear();
 
-    draw_badge(
-        display,
-        Point::new(display.width() as i32 / 2, 5),
-        " RESULTS ",
-        Rgb565::GREEN,
-        Rgb565::BLACK,
-    )
-    .await
+    // draw_badge(
+    //     display,
+    //     Point::new(display.width() as i32 / 2, 5),
+    //     " RESULTS ",
+    //     Rgb565::GREEN,
+    //     Rgb565::BLACK,
+    // )
+    // .await
 }
 
 pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState) {
+    let exposure_time_origin = Point::new(20, 100);
     {
         let duration_micros = state.result.integrated_duration_micros.max(1);
         let mut s = EString::<128>::default();
-        s.clear();
-        if duration_micros < 500_000 {
-            let _ = uwrite!(s, "1/");
+
+        let dim = if duration_micros < 500_000 {
             write_fraction(&mut s, 1_000_000_f32 / duration_micros as f32);
+            SMALL_FONT
+                .render(
+                    "1/",
+                    exposure_time_origin + Point::new(0, 30),
+                    VerticalPosition::Top,
+                    FontColor::WithBackground {
+                        fg: Rgb565::CSS_LIGHT_GRAY,
+                        bg: Rgb565::BLACK,
+                    },
+                    &mut **display,
+                )
+                .unwrap();
+            LARGE_DIGIT_FONT
+                .render(
+                    &s[..],
+                    exposure_time_origin + Point::new(30, 15),
+                    VerticalPosition::Top,
+                    FontColor::WithBackground {
+                        fg: Rgb565::WHITE,
+                        bg: Rgb565::BLACK,
+                    },
+                    &mut **display,
+                )
+                .unwrap()
         } else {
             write_fraction(&mut s, duration_micros as f32 / 1_000_000_f32);
-        }
-        let _ = uwrite!(s, " s");
-        let _ = LARGE_FONT.render(
-            &s[..],
-            Point::new(20, 110),
+            LARGE_DIGIT_FONT
+                .render(
+                    &s[..],
+                    exposure_time_origin + Point::new(0, 15),
+                    VerticalPosition::Top,
+                    FontColor::WithBackground {
+                        fg: Rgb565::WHITE,
+                        bg: Rgb565::BLACK,
+                    },
+                    &mut **display,
+                )
+                .unwrap()
+        };
+        SMALL_FONT
+            .render(
+                "s",
+                dim.bounding_box.unwrap().bottom_right().unwrap() + Point::new(5, -27),
+                VerticalPosition::Top,
+                FontColor::WithBackground {
+                    fg: Rgb565::CSS_LIGHT_GRAY,
+                    bg: Rgb565::BLACK,
+                },
+                &mut **display,
+            )
+            .unwrap();
+
+        let _ = TINY_FONT.render(
+            " Exposure time ",
+            exposure_time_origin,
             VerticalPosition::Top,
             FontColor::WithBackground {
-                fg: Rgb565::WHITE,
-                bg: Rgb565::BLACK,
+                bg: Rgb565::WHITE,
+                fg: Rgb565::BLACK,
             },
             &mut **display,
         );
@@ -138,16 +207,16 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
 
     {
         let mut s = EString::<128>::default();
-        s.clear();
+        s.push(' ').unwrap();
         write_micros(&mut s, state.result.integrated_duration_micros);
-        let _ = uwrite!(s, " exposure");
+        let _ = s.push(' ');
         let _ = TINY_FONT.render(
             &s[..],
-            Point::new(20, 160),
+            exposure_time_origin + Point::new(150, 0),
             VerticalPosition::Top,
             FontColor::WithBackground {
-                fg: Rgb565::RED,
-                bg: Rgb565::BLACK,
+                bg: Rgb565::CSS_ORANGE_RED,
+                fg: Rgb565::BLACK,
             },
             &mut **display,
         );
@@ -209,7 +278,7 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
     let width = display.width();
     let ruler_height = 10;
 
-    let duration_to_x_offset = |d: f32| ((1.0 / d).log2() * 40.0) as i32;
+    let duration_to_x_offset = |d: f32| ((1.0 / d).log2() * 60.0) as i32;
 
     let actual_x = origin.x + duration_to_x_offset(actual_duration_secs);
 
@@ -277,10 +346,10 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
         let mut s = EString::<128>::default();
         s.clear();
         let mut color = if duration >= &1.0 {
-            let _ = uwrite!(s, "{}", duration.round() as u32);
+            let _ = uwrite!(s, " {} ", duration.round() as u32);
             Rgb565::CSS_ORANGE
         } else {
-            let _ = uwrite!(s, "{}", (1.0 / duration).round() as u32);
+            let _ = uwrite!(s, " {} ", (1.0 / duration).round() as u32);
             Rgb565::CSS_PALE_GREEN
         };
         if best_match == *duration {
@@ -288,26 +357,32 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
             draw_triangle(display, Point::new(x, y - ruler_height - 1), 10, color);
         }
 
-        display
-            .fill_solid(
-                &Rectangle::new(
-                    Point::new(x, y - ruler_height),
-                    Size::new(1, ruler_height as u32),
-                ),
-                color,
-            )
-            .unwrap();
-
         let label_size = TINY_FONT
             .get_rendered_dimensions(&s[..], Point::zero(), VerticalPosition::Top)
             .unwrap();
         let label_origin = Point::new(
             x - label_size.bounding_box.unwrap().size.width as i32 / 2,
-            y + 5,
+            y + 7,
         );
-        if label_origin.x + label_size.bounding_box.unwrap().size.width as i32 > width as i32
-            || label_origin.x < 0
-        {
+
+        let label_off_screen = label_origin.x + label_size.bounding_box.unwrap().size.width as i32
+            > width as i32
+            || label_origin.x < 0;
+
+        display
+            .fill_solid(
+                &Rectangle::new(
+                    Point::new(x - 1, y - ruler_height),
+                    Size::new(
+                        3,
+                        ruler_height as u32 + if label_off_screen { 0 } else { 5 },
+                    ),
+                ),
+                color,
+            )
+            .unwrap();
+
+        if label_off_screen {
             continue;
         }
         let _ = TINY_FONT.render(
@@ -315,8 +390,8 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
             label_origin,
             VerticalPosition::Top,
             FontColor::WithBackground {
-                fg: color,
-                bg: Rgb565::BLACK,
+                bg: color,
+                fg: Rgb565::BLACK,
             },
             &mut **display,
         );
@@ -415,7 +490,7 @@ fn draw_chart<const LEN: usize>(
         let start_x = chart.len() - samples_since_start;
         if let Some(start_y) = chart.get(start_x) {
             let (x, y) = xy_to_coords(start_x as u16, *start_y);
-            draw_cross(display, Point::new(x, y), 5, Rgb565::GREEN);
+            draw_cross(display.deref_mut(), Point::new(x, y), 5, Rgb565::GREEN);
         }
     }
 
@@ -423,7 +498,7 @@ fn draw_chart<const LEN: usize>(
         let end_x = chart.len() - samples_since_end;
         if let Some(end_y) = chart.get(end_x) {
             let (x, y) = xy_to_coords(end_x as u16, *end_y);
-            draw_cross(display, Point::new(x, y), 5, Rgb565::YELLOW);
+            draw_cross(display.deref_mut(), Point::new(x, y), 5, Rgb565::YELLOW);
         }
     }
 }
@@ -460,8 +535,8 @@ pub fn draw_debug_ui(display: &mut Display<Spi<SPI1>>, state: &mut DebugUiState)
         Point::new(10, 110),
         VerticalPosition::Top,
         FontColor::WithBackground {
-            fg: Rgb565::WHITE,
-            bg: Rgb565::BLACK,
+            bg: Rgb565::WHITE,
+            fg: Rgb565::BLACK,
         },
         &mut **display,
     );
@@ -492,7 +567,7 @@ pub async fn draw_boot_screen(display: &mut Display<Spi<SPI1>>) {
     let x = (display.width() / 2) as i32;
     let y = (display.height() / 2) as i32;
 
-    draw_cross(display, Point::new(x, y + 10), 20, Rgb565::RED);
+    draw_cross(display.deref_mut(), Point::new(x, y + 10), 20, Rgb565::RED);
     draw_badge(
         display,
         Point::new(x, y),
@@ -509,7 +584,12 @@ pub async fn draw_boot_screen(display: &mut Display<Spi<SPI1>>) {
         Rgb565::BLACK,
     )
     .await;
-    draw_cross(display, Point::new(x, y + 10), 30, Rgb565::WHITE);
+    draw_cross(
+        display.deref_mut(),
+        Point::new(x, y + 10),
+        30,
+        Rgb565::WHITE,
+    );
     draw_badge(
         display,
         Point::new(x, y),
@@ -528,7 +608,7 @@ const THICKENING_OFFSETS: [Point; 4] = [
     Point::new(1, 1),
 ];
 
-pub fn draw_cross(display: &mut Display<Spi<SPI1>>, point: Point, size: u32, color: Rgb565) {
+pub fn draw_cross<D: AppDrawTarget>(display: &mut D, point: Point, size: u32, color: Rgb565) {
     for dir in [-1, 1] {
         for offset in THICKENING_OFFSETS {
             display
@@ -592,4 +672,64 @@ pub async fn draw_badge(
             &mut **display,
         )
         .unwrap();
+}
+
+pub fn draw_panic_screen<D: AppDrawTarget>(display: &mut D, message: &str) {
+    let width = display.bounding_box().size.width;
+    let height = display.bounding_box().size.height;
+
+    let _ = display.fill_solid(&display.bounding_box(), Rgb565::RED);
+
+    for d in [-1, 0, 1] {
+        draw_cross(
+            display,
+            Point::new(width as i32 / 2 + d * 40, 50),
+            15,
+            Rgb565::BLACK,
+        );
+    }
+
+    TINY_FONT
+        .render_aligned(
+            env!("CARGO_PKG_VERSION"),
+            Point::new(width as i32 / 2, 80),
+            VerticalPosition::Top,
+            HorizontalAlignment::Center,
+            FontColor::WithBackground {
+                fg: Rgb565::BLACK,
+                bg: Rgb565::RED,
+            },
+            display,
+        )
+        .unwrap();
+
+    SMALL_FONT
+        .render_aligned(
+            " FATAL ERROR ",
+            Point::new(width as i32 / 2, 100),
+            VerticalPosition::Top,
+            HorizontalAlignment::Center,
+            FontColor::WithBackground {
+                fg: Rgb565::RED,
+                bg: Rgb565::BLACK,
+            },
+            display,
+        )
+        .unwrap();
+
+    let character_style = U8g2TextStyle::new(u8g2_font_profont17_mr, Rgb565::BLACK);
+
+    let textbox_style = TextBoxStyleBuilder::new()
+        .height_mode(HeightMode::FitToText)
+        .alignment(embedded_text::alignment::HorizontalAlignment::Center)
+        .build();
+
+    let origin = Point::new(10, 160);
+    let _ = TextBox::with_textbox_style(
+        message.as_ref(),
+        Rectangle::new(origin, Size::new(width - 20, height - origin.y as u32 - 20)),
+        character_style,
+        textbox_style,
+    )
+    .draw(display);
 }

@@ -4,7 +4,7 @@ pub fn write_fraction<W: uWrite>(s: &mut W, fraction: f32) {
     let int = fraction as u32;
     let fr = (fraction - int as f32) * 10.0;
     let _ = uwrite!(s, "{}", int);
-    if int < 100 {
+    if int < 10 {
         let _ = uwrite!(s, ".{}", fr as u32);
     }
 }

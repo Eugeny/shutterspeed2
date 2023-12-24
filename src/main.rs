@@ -110,16 +110,14 @@ mod app {
             // .require_pll48clk()
             .hclk(HCLK.MHz())
             .use_hse(25.MHz())
-            .pclk1(40.MHz())
-            .pclk2(40.MHz())
+            .pclk1(80.MHz())
+            .pclk2(80.MHz())
             .freeze();
 
         CYCCNTClock::<SYSCLK>::init(&mut cx.core.DCB, cx.core.DWT);
 
         let systick_token = create_systick_token!();
         Systick::start(cx.core.SYST, SYSCLK, systick_token);
-
-        let mut delay = dp.TIM3.delay_us(&clocks);
 
         let mut led_pin = gpioc.pc13.into_push_pull_output();
 
@@ -159,7 +157,8 @@ mod app {
 
         //----
 
-        let display = {
+        let mut delay = dp.TIM3.delay_us(&clocks);
+        let mut display = {
             let mut dc_pin = gpioa.pa8.into_push_pull_output();
             let mut rst_pin = gpioa.pa11.into_push_pull_output();
             let mut sclk_pin = gpioa.pa5.into_alternate();
@@ -174,15 +173,15 @@ mod app {
                 dp.SPI1,
                 (sclk_pin, miso_pin, mosi_pin),
                 embedded_hal::spi::MODE_3,
-                5.MHz(),
+                40.MHz(),
                 &clocks,
             );
-            let mut display = Display::new(spi, dc_pin.erase(), rst_pin.erase(), &mut delay);
+            let mut display = Display::new(spi, dc_pin.erase(), rst_pin.erase(), backlight_pin.erase(), &mut delay);
             display.clear();
             display
         };
 
-        backlight_pin.set_high();
+        display.backlight_on();
 
         let mut mode_button_pin = gpioa.pa1.into_pull_down_input();
         mode_button_pin.make_interrupt_source(&mut syscfg);
@@ -193,6 +192,8 @@ mod app {
         measure_button_pin.make_interrupt_source(&mut syscfg);
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
+
+        // display.panic_error("FATAL ERROR AAARGH");
 
         display_task::spawn().unwrap();
         led_pin.set_low();
@@ -292,13 +293,13 @@ mod app {
 
     #[task(shared=[app_mode, adc_value, calibration_state, measurement], priority=2)]
     async fn measure_task(mut ctx: measure_task::Context) {
-        // DEBUG
+        // // DEBUG
         // {
         //     ctx.shared.app_mode.lock(|app_mode| {
         //         *app_mode = AppMode::Results;
         //     });
         //     ctx.shared.measurement.lock(|measurement| {
-        //         *measurement = Measurement::new_debug_duration(1200);
+        //         *measurement = Measurement::new_debug_duration(12);
         //     });
         //     return;
         // }

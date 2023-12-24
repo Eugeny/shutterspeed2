@@ -2,28 +2,29 @@ use core::ops::{Deref, DerefMut};
 
 use display_interface_spi::SPIInterfaceNoCS;
 use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::geometry::{OriginDimensions, Point, Size};
-use embedded_graphics::mono_font::ascii::FONT_10X20;
-use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::geometry::OriginDimensions;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
-use embedded_graphics::primitives::Rectangle;
-use embedded_graphics::Drawable;
 use embedded_hal::blocking::delay::DelayUs;
-use embedded_text::alignment::HorizontalAlignment;
-use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
-use embedded_text::TextBox;
 use mipidsi::models::ST7789;
 use stm32f4xx_hal::gpio::{ErasedPin, Output};
 
+use crate::ui::draw_panic_screen;
+
 pub struct Display<SPI: embedded_hal::blocking::spi::Write<u8>> {
     inner: mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
+    backlight_pin: ErasedPin<Output>,
 }
+
+pub trait AppDrawTarget: DrawTarget<Color = Rgb565, Error = mipidsi::Error> {}
+
+impl<D: DrawTarget<Color = Rgb565, Error = mipidsi::Error>> AppDrawTarget for D {}
 
 impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
     pub fn new<Delay: DelayUs<u32>>(
         spi: SPI,
         dc_pin: ErasedPin<Output>,
         rst_pin: ErasedPin<Output>,
+        backlight_pin: ErasedPin<Output>,
         delay: &mut Delay,
     ) -> Self {
         let di = SPIInterfaceNoCS::new(spi, dc_pin);
@@ -35,11 +36,28 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
             Ok(x) => x,
             Err(_) => panic!(),
         };
-        Display { inner: display }
+        Display {
+            inner: display,
+            backlight_pin,
+        }
     }
 
     pub fn clear(&mut self) {
         self.inner.clear(Rgb565::BLACK).unwrap();
+    }
+
+    pub fn backlight_on(&mut self) {
+        self.backlight_pin.set_high();
+    }
+
+    pub fn backlight_off(&mut self) {
+        self.backlight_pin.set_low();
+    }
+
+    pub fn sneaky_clear(&mut self, color: Rgb565) {
+        self.backlight_off();
+        self.inner.clear(color).unwrap();
+        self.backlight_on();
     }
 
     pub fn height(&self) -> u32 {
@@ -51,50 +69,21 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
     }
 
     pub fn panic_error<S: AsRef<str>>(&mut self, message: S) {
-        self.clear();
-
-        let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
-
-        let textbox_style = TextBoxStyleBuilder::new()
-            .height_mode(HeightMode::FitToText)
-            .alignment(HorizontalAlignment::Center)
-            .build();
-
-        let _ = TextBox::with_textbox_style(
-            "FATAL ERROR",
-            Rectangle::new(Point::new(10, 20), Size::new(self.width() - 20, 100)),
-            character_style,
-            textbox_style,
-        )
-        .draw(&mut self.inner);
-        let _ = TextBox::with_textbox_style(
-            message.as_ref(),
-            Rectangle::new(
-                Point::new(10, 60),
-                Size::new(self.width() - 20, self.height() - 20),
-            ),
-            character_style,
-            textbox_style,
-        )
-        .draw(&mut self.inner);
-
+        draw_panic_screen(&mut self.inner, message.as_ref());
         panic!();
     }
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>> Deref
-    for Display<SPI>
-{
-    type Target = mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>;
+impl<SPI: embedded_hal::blocking::spi::Write<u8>> Deref for Display<SPI> {
+    type Target =
+        mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>> DerefMut
-    for Display<SPI>
-{
+impl<SPI: embedded_hal::blocking::spi::Write<u8>> DerefMut for Display<SPI> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
