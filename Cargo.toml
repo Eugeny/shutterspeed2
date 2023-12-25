@@ -10,7 +10,6 @@ cortex-m = "*"
 cortex-m-rt = "0.7.3"
 cortex-m-semihosting = "0.5.0"
 embedded-hal = "*"
-panic-halt = "0.2.0"
 stm32f4xx-hal = { version = "0.19", features = ["stm32f401"] }
 
 mipidsi = "0.7.1"
@@ -19,7 +18,7 @@ embedded-graphics = "0.8.0"
 embedded-time = "0.12.1"
 fugit = "0.3.7"
 ufmt = "0.2.0"
-heapless = "0.8.0"
+heapless = { version = "0.8.0", features = ["ufmt"] }
 u8g2-fonts = { version = "0.4.0", features = ["embedded_graphics_textstyle"] }
 embedded-text = "0.7.0"
 rtic-monotonics = { version = "1.4.1", features = [
@@ -34,6 +33,7 @@ rtic = { version = "2", features = [
 ] }
 cortex-m-microclock = "0.1.0"
 micromath = { version = "2.1.0", features = ["num-traits"] }
+embedded-alloc = "0.5.1"
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"
@@ -58,3 +58,4 @@ bench = false
 codegen-units = 1 # better optimizations
 debug = true      # symbols are nice and they don't increase the size on Flash
 lto = true        # better optimizations
+opt-level = "z"

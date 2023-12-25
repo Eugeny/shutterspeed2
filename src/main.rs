@@ -3,8 +3,20 @@
 #![feature(type_alias_impl_trait)]
 #![feature(associated_type_bounds)]
 #![feature(iter_array_chunks)]
+#![feature(sync_unsafe_cell)]
 
-use panic_halt as _;
+use core::cell::RefCell;
+use core::fmt::Write;
+use core::panic::PanicInfo;
+use core::sync::atomic::{self, Ordering};
+
+use cortex_m::interrupt::{CriticalSection, Mutex};
+use display::Display;
+use embedded_alloc::Heap;
+use stm32f4xx_hal::pac::SPI1;
+use stm32f4xx_hal::spi::Spi;
+
+use crate::ui::draw_panic_screen;
 mod display;
 mod format;
 mod hardware_config;
@@ -12,8 +24,15 @@ mod measurement;
 mod ui;
 mod util;
 
-#[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [SPI2, SPI3])]
+#[global_allocator]
+static HEAP: Heap = Heap::empty();
+
+static PANIC_DISPLAY_REF: Mutex<RefCell<Option<&mut Display<Spi<SPI1>>>>> =
+    Mutex::new(RefCell::new(None));
+
+#[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [SPI2, SPI3, SPI4])]
 mod app {
+    use core::cell::UnsafeCell;
     use core::num::Wrapping;
 
     use cortex_m_microclock::CYCCNTClock;
@@ -61,13 +80,13 @@ mod app {
         app_mode: AppMode,
         calibration_state: CalibrationState,
         measurement: Measurement<CycleCounterClock<SYSCLK>>,
+        display: UnsafeCell<Display<Spi<SPI1>>>,
     }
 
     #[local]
     struct Local {
         adc_dma_buffer: Option<&'static mut u16>,
         timer: CounterHz<TIM2>,
-        display: Display<Spi<SPI1>>,
         adc_history: HistoryBuffer<u16, 100>,
         adc_avg_window: HistoryBuffer<u16, 4>,
         mode_button_pin: ErasedPin<Input>,
@@ -76,6 +95,13 @@ mod app {
 
     #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
     fn init(mut cx: init::Context) -> (Shared, Local) {
+        {
+            use core::mem::MaybeUninit;
+            const HEAP_SIZE: usize = 1024;
+            static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+            unsafe { crate::HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
+        }
+
         let mut dp: pac::Peripherals = cx.device;
 
         let gpioa = dp.GPIOA.split();
@@ -176,7 +202,13 @@ mod app {
                 40.MHz(),
                 &clocks,
             );
-            let mut display = Display::new(spi, dc_pin.erase(), rst_pin.erase(), backlight_pin.erase(), &mut delay);
+            let mut display = Display::new(
+                spi,
+                dc_pin.erase(),
+                rst_pin.erase(),
+                backlight_pin.erase(),
+                &mut delay,
+            );
             display.clear();
             display
         };
@@ -193,10 +225,10 @@ mod app {
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
-        // display.panic_error("FATAL ERROR AAARGH");
-
         display_task::spawn().unwrap();
         led_pin.set_low();
+
+        let display = UnsafeCell::new(display);
 
         (
             Shared {
@@ -206,11 +238,11 @@ mod app {
                 app_mode: AppMode::Start,
                 calibration_state: CalibrationState::Done(0),
                 measurement: Measurement::new(0),
+                display,
             },
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
                 timer,
-                display,
                 adc_history: HistoryBuffer::new(),
                 adc_avg_window: HistoryBuffer::new(),
                 mode_button_pin: mode_button_pin.erase(),
@@ -344,17 +376,21 @@ mod app {
         });
     }
 
-    #[task(local=[display, adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_state, measurement], priority=1)]
-    async fn display_task(mut ctx: display_task::Context) {
-        let local = ctx.local;
-        draw_boot_screen(local.display).await;
+    #[task(local=[adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
+    async fn display_task(mut cx: display_task::Context) {
+        let local = cx.local;
+
+        // Only shared with the panic handler, which never returns
+        let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
+
+        draw_boot_screen(display).await;
 
         let mut mode = AppMode::None;
 
         loop {
             let now = Systick::now();
 
-            if let Some(changed_mode) = ctx.shared.app_mode.lock(|app_mode| {
+            if let Some(changed_mode) = cx.shared.app_mode.lock(|app_mode| {
                 if *app_mode != mode {
                     mode = *app_mode;
                     return Some(mode);
@@ -362,18 +398,18 @@ mod app {
                 None
             }) {
                 match changed_mode {
-                    AppMode::Calibrating => init_calibrating_ui(local.display).await,
-                    AppMode::Measure => init_measuring_ui(local.display).await,
-                    AppMode::Debug => init_debug_ui(local.display),
-                    AppMode::Results => init_results_ui(local.display).await,
-                    AppMode::Start => init_start_ui(local.display).await,
+                    AppMode::Calibrating => init_calibrating_ui(display).await,
+                    AppMode::Measure => init_measuring_ui(display).await,
+                    AppMode::Debug => init_debug_ui(display),
+                    AppMode::Results => init_results_ui(display).await,
+                    AppMode::Start => init_start_ui(display).await,
                     AppMode::None => (),
                 };
             }
 
             match mode {
                 AppMode::Debug => {
-                    let adc_value = ctx.shared.adc_value.lock(|adc_value| *adc_value);
+                    let adc_value = cx.shared.adc_value.lock(|adc_value| *adc_value);
                     local.adc_history.write(adc_value);
                     local.adc_avg_window.write(adc_value);
 
@@ -381,35 +417,35 @@ mod app {
                     let max_adc_value = *local.adc_avg_window.iter().max().unwrap_or(&0);
 
                     draw_debug_ui(
-                        local.display,
+                        display,
                         &mut DebugUiState {
                             adc_value,
                             min_adc_value,
                             max_adc_value,
                             adc_history: local.adc_history,
                             // adc_value: avg_adc_value,
-                            sample_counter: ctx
+                            sample_counter: cx
                                 .shared
                                 .sample_counter
                                 .lock(|sample_counter| sample_counter.0),
                         },
                     );
                 }
-                AppMode::Start => draw_start_ui(local.display),
+                AppMode::Start => draw_start_ui(display),
                 AppMode::Calibrating => {}
-                AppMode::Measure => draw_measuring_ui(local.display),
+                AppMode::Measure => draw_measuring_ui(display),
                 AppMode::Results => {
-                    let calibration = ctx
+                    let calibration = cx
                         .shared
                         .calibration_state
                         .lock(|calibration_state| calibration_state.clone());
-                    let result = ctx
+                    let result = cx
                         .shared
                         .measurement
                         .lock(|measurement| measurement.result().cloned())
                         .unwrap();
                     draw_results_ui(
-                        local.display,
+                        display,
                         &ResultsUiState {
                             calibration,
                             result,
@@ -423,10 +459,45 @@ mod app {
         }
     }
 
-    #[idle]
-    fn idle(_cx: idle::Context) -> ! {
+    #[idle(shared=[display])]
+    fn idle(mut cx: idle::Context) -> ! {
+        cx.shared.display.lock(|display| {
+            cortex_m::interrupt::free(|cs| {
+                *crate::PANIC_DISPLAY_REF.borrow(cs).borrow_mut() =
+                    Some(unsafe { &mut *display.get() });
+            });
+        });
+
         loop {
             rtic::export::wfi()
         }
+    }
+}
+
+#[inline(never)]
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    // We're dying, go all out just this once
+    let cs = unsafe { CriticalSection::new() };
+    let display = PANIC_DISPLAY_REF.borrow(&cs).borrow_mut().take().unwrap();
+
+    unsafe {
+        cortex_m::interrupt::enable();
+    }
+
+    let mut message = heapless::String::<256>::default();
+
+    if write!(message, "{info}").is_err() {
+        let _ = write!(message, "Could not format panic message");
+    }
+
+    draw_panic_screen(&mut **display, message.as_ref());
+
+    cortex_m::interrupt::disable();
+
+    loop {
+        // add some side effect to prevent this from turning into a UDF instruction
+        // see rust-lang/rust#28728 for details
+        atomic::compiler_fence(Ordering::SeqCst);
     }
 }

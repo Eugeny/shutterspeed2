@@ -122,10 +122,7 @@ impl<M: LaxMonotonic> Measurement<M> {
     }
 
     pub fn is_done(&self) -> bool {
-        match self.state {
-            MeasurementState::Done { .. } => true,
-            _ => false,
-        }
+        matches!(self.state, MeasurementState::Done { .. })
     }
 
     pub fn step(&mut self, value: u16) {

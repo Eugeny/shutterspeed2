@@ -10,7 +10,7 @@ use embedded_text::TextBox;
 use hal::pac::SPI1;
 use hal::prelude::*;
 use hal::spi::Spi;
-use heapless::HistoryBuffer;
+use heapless::{HistoryBuffer, String};
 use micromath::F32Ext;
 use rtic_monotonics::systick::Systick;
 use stm32f4xx_hal as hal;
@@ -22,7 +22,7 @@ use ufmt::uwrite;
 use crate::display::{AppDrawTarget, Display};
 use crate::format::{write_fraction, write_micros};
 use crate::measurement::{CalibrationState, MeasurementResult};
-use crate::util::{EString, LaxMonotonic};
+use crate::util::LaxMonotonic;
 
 // const TEXT_FONT: FontRenderer = FontRenderer::new::<u8g2_font_spleen16x32_me>();
 const SMALL_FONT: FontRenderer = FontRenderer::new::<u8g2_font_profont29_mr>();
@@ -133,7 +133,7 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
     let exposure_time_origin = Point::new(20, 100);
     {
         let duration_micros = state.result.integrated_duration_micros.max(1);
-        let mut s = EString::<128>::default();
+        let mut s = String::<128>::default();
 
         let dim = if duration_micros < 500_000 {
             write_fraction(&mut s, 1_000_000_f32 / duration_micros as f32);
@@ -189,40 +189,44 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
             )
             .unwrap();
 
-        let _ = TINY_FONT.render(
-            " Exposure time ",
-            exposure_time_origin,
-            VerticalPosition::Top,
-            FontColor::WithBackground {
-                bg: Rgb565::WHITE,
-                fg: Rgb565::BLACK,
-            },
-            &mut **display,
-        );
+        TINY_FONT
+            .render(
+                " Exposure time ",
+                exposure_time_origin,
+                VerticalPosition::Top,
+                FontColor::WithBackground {
+                    bg: Rgb565::WHITE,
+                    fg: Rgb565::BLACK,
+                },
+                &mut **display,
+            )
+            .unwrap();
     }
 
     {
-        let mut s = EString::<128>::default();
+        let mut s = String::<128>::default();
         s.push(' ').unwrap();
         write_micros(&mut s, state.result.integrated_duration_micros);
         let _ = s.push(' ');
-        let _ = TINY_FONT.render(
-            &s[..],
-            exposure_time_origin + Point::new(150, 0),
-            VerticalPosition::Top,
-            FontColor::WithBackground {
-                bg: Rgb565::CSS_ORANGE_RED,
-                fg: Rgb565::BLACK,
-            },
-            &mut **display,
-        );
+        TINY_FONT
+            .render(
+                &s[..],
+                exposure_time_origin + Point::new(150, 0),
+                VerticalPosition::Top,
+                FontColor::WithBackground {
+                    bg: Rgb565::CSS_ORANGE_RED,
+                    fg: Rgb565::BLACK,
+                },
+                &mut **display,
+            )
+            .unwrap();
     }
 
     // {
-    //     let mut s = EString::<128>::default();
+    //     let mut s = String::<128>::default();
     //     s.clear();
-    //     let _ = uwrite!(s, "{} us start to end", state.result.duration_micros,);
-    //     let _ = TINY_FONT.render(
+    //     uwrite!(s, "{} us start to end", state.result.duration_micros,).unwrap();
+    //     TINY_FONT.render(
     //         &s[..],
     //         Point::new(20, 195),
     //         VerticalPosition::Top,
@@ -231,18 +235,18 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
     //             bg: Rgb565::BLACK,
     //         },
     //         &mut **display,
-    //     );
+    //     ).unwrap();
     // }
     // {
-    // let mut s = EString::<128>::default();
+    // let mut s = String::<128>::default();
     // s.clear();
-    // let _ = uwrite!(
+    // uwrite!(
     //     s,
     //     "Captured {} samples",
     //     state.result.sample_buffer.len(),
     //     // state.result.samples_since_end - state.result.samples_since_start
-    // );
-    // let _ = TINY_FONT.render(
+    // ).unwrap();
+    // TINY_FONT.render(
     //     &s[..],
     //     Point::new(20, 215),
     //     VerticalPosition::Top,
@@ -251,7 +255,7 @@ pub fn draw_results_ui(display: &mut Display<Spi<SPI1>>, state: &ResultsUiState)
     //         bg: Rgb565::BLACK,
     //     },
     //     &mut **display,
-    // );
+    // ).unwrap();
     // }
 
     draw_speed_ruler(
@@ -338,13 +342,13 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
     for duration in known_durations.iter() {
         let x = origin.x + overall_x_offset + duration_to_x_offset(*duration);
         let y = origin.y;
-        let mut s = EString::<128>::default();
+        let mut s = String::<128>::default();
         s.clear();
         let mut color = if duration >= &1.0 {
-            let _ = uwrite!(s, " {} ", duration.round() as u32);
+            uwrite!(s, " {} ", duration.round() as u32).unwrap();
             Rgb565::CSS_ORANGE
         } else {
-            let _ = uwrite!(s, " {} ", (1.0 / duration).round() as u32);
+            uwrite!(s, " {} ", (1.0 / duration).round() as u32).unwrap();
             Rgb565::CSS_PALE_GREEN
         };
         if best_match == *duration {
@@ -386,16 +390,18 @@ fn draw_speed_ruler(display: &mut Display<Spi<SPI1>>, origin: Point, actual_dura
         if label_off_screen {
             continue;
         }
-        let _ = TINY_FONT.render(
-            &s[..],
-            label_origin,
-            VerticalPosition::Top,
-            FontColor::WithBackground {
-                bg: color,
-                fg: Rgb565::BLACK,
-            },
-            &mut **display,
-        );
+        TINY_FONT
+            .render(
+                &s[..],
+                label_origin,
+                VerticalPosition::Top,
+                FontColor::WithBackground {
+                    bg: color,
+                    fg: Rgb565::BLACK,
+                },
+                &mut **display,
+            )
+            .unwrap();
     }
 
     draw_triangle(
@@ -535,28 +541,24 @@ pub fn init_debug_ui(display: &mut Display<Spi<SPI1>>) {
 pub fn draw_debug_ui(display: &mut Display<Spi<SPI1>>, state: &mut DebugUiState) {
     draw_chart(display, state.adc_history, 10, None, None, true);
 
-    let mut s = EString::<128>::default();
+    let mut s = String::<128>::default();
     s.clear();
 
     let variation = (state.max_adc_value - state.min_adc_value) / 2;
 
-    let _ = uwrite!(s, "{} +-{}  ", state.adc_value, variation);
-    let res = LARGE_DIGIT_FONT.render(
-        &s[..],
-        Point::new(10, 110),
-        VerticalPosition::Top,
-        FontColor::WithBackground {
-            bg: Rgb565::WHITE,
-            fg: Rgb565::BLACK,
-        },
-        &mut **display,
-    );
-    if let Err(err) = res {
-        s.clear();
-        use core::fmt::Write;
-        let _ = write!(*s, "Failed with: {:?}", err);
-        display.panic_error(&s[..]);
-    }
+    uwrite!(s, "{} +-{}  ", state.adc_value, variation).unwrap();
+    LARGE_DIGIT_FONT
+        .render(
+            &s[..],
+            Point::new(10, 110),
+            VerticalPosition::Top,
+            FontColor::WithBackground {
+                bg: Rgb565::WHITE,
+                fg: Rgb565::BLACK,
+            },
+            &mut **display,
+        )
+        .unwrap();
 
     s.clear();
     let _ = uwrite!(s, "Samples: {}", state.sample_counter);
@@ -698,7 +700,9 @@ pub fn draw_panic_screen<D: AppDrawTarget>(display: &mut D, message: &str) {
     let width = display.bounding_box().size.width;
     let height = display.bounding_box().size.height;
 
-    let _ = display.fill_solid(&display.bounding_box(), Rgb565::RED);
+    display
+        .fill_solid(&display.bounding_box(), Rgb565::RED)
+        .unwrap();
 
     for d in [-1, 0, 1] {
         draw_cross(
@@ -744,10 +748,10 @@ pub fn draw_panic_screen<D: AppDrawTarget>(display: &mut D, message: &str) {
         .alignment(embedded_text::alignment::HorizontalAlignment::Center)
         .build();
 
-    let origin = Point::new(10, 160);
+    let origin = Point::new(10, 150);
     let _ = TextBox::with_textbox_style(
-        message.as_ref(),
-        Rectangle::new(origin, Size::new(width - 20, height - origin.y as u32 - 20)),
+        message,
+        Rectangle::new(origin, Size::new(width - 20, height - origin.y as u32)),
         character_style,
         textbox_style,
     )

@@ -8,8 +8,6 @@ use embedded_hal::blocking::delay::DelayUs;
 use mipidsi::models::ST7789;
 use stm32f4xx_hal::gpio::{ErasedPin, Output};
 
-use crate::ui::draw_panic_screen;
-
 pub struct Display<SPI: embedded_hal::blocking::spi::Write<u8>> {
     inner: mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
     backlight_pin: ErasedPin<Output>,
@@ -28,14 +26,11 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
         delay: &mut Delay,
     ) -> Self {
         let di = SPIInterfaceNoCS::new(spi, dc_pin);
-        let display = match mipidsi::Builder::st7789(di)
+        let display = mipidsi::Builder::st7789(di)
             .with_orientation(mipidsi::Orientation::Landscape(true))
             .with_invert_colors(mipidsi::ColorInversion::Inverted)
             .init(delay, Some(rst_pin))
-        {
-            Ok(x) => x,
-            Err(_) => panic!(),
-        };
+            .unwrap();
         Display {
             inner: display,
             backlight_pin,
@@ -66,11 +61,6 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
 
     pub fn width(&self) -> u32 {
         self.size().width
-    }
-
-    pub fn panic_error<S: AsRef<str>>(&mut self, message: S) {
-        draw_panic_screen(&mut self.inner, message.as_ref());
-        panic!();
     }
 }
 
