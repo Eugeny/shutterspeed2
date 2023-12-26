@@ -11,14 +11,13 @@ use stm32f4xx_hal::gpio::{ErasedPin, Output};
 pub trait DisplayInterface: embedded_hal::blocking::spi::Write<u8> {}
 impl<W: embedded_hal::blocking::spi::Write<u8>> DisplayInterface for W {}
 
+pub trait AppDrawTarget: DrawTarget<Color = Rgb565, Error = mipidsi::Error> {}
+impl<D: DrawTarget<Color = Rgb565, Error = mipidsi::Error>> AppDrawTarget for D {}
+
 pub struct Display<DI: DisplayInterface> {
     inner: mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
     backlight_pin: ErasedPin<Output>,
 }
-
-pub trait AppDrawTarget: DrawTarget<Color = Rgb565, Error = mipidsi::Error> {}
-
-impl<D: DrawTarget<Color = Rgb565, Error = mipidsi::Error>> AppDrawTarget for D {}
 
 impl<DI: DisplayInterface> Display<DI> {
     pub fn new<Delay: DelayUs<u32>>(

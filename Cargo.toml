@@ -34,6 +34,7 @@ rtic = { version = "2", features = [
 cortex-m-microclock = "0.1.0"
 micromath = { version = "2.1.0", features = ["num-traits"] }
 embedded-alloc = "0.5.1"
+enum_dispatch = "0.3.12"
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"

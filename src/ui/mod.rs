@@ -9,9 +9,7 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::{Drawable, Pixel};
 use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
-use hal::pac::SPI1;
 use hal::prelude::*;
-use hal::spi::Spi;
 use heapless::{HistoryBuffer, String};
 use micromath::F32Ext;
 use rtic_monotonics::systick::Systick;
@@ -21,7 +19,8 @@ use u8g2_fonts::U8g2TextStyle;
 use ufmt::uwrite;
 
 use self::fonts::{TinyFont, SMALL_FONT, TINY_FONT};
-use crate::display::{AppDrawTarget, Display};
+use crate::display::AppDrawTarget;
+use crate::hardware_config::DisplayType;
 
 fn draw_speed_ruler<D: AppDrawTarget>(display: &mut D, origin: Point, actual_duration_secs: f32) {
     let width = display.bounding_box().size.width;
@@ -269,7 +268,7 @@ fn draw_chart<const LEN: usize, D: AppDrawTarget>(
     }
 }
 
-pub async fn draw_boot_screen(display: &mut Display<Spi<SPI1>>) {
+pub async fn draw_boot_screen(display: &mut DisplayType) {
     let x = (display.width() / 2) as i32;
     let y = (display.height() / 2) as i32;
 

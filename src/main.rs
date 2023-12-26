@@ -5,30 +5,17 @@
 #![feature(iter_array_chunks)]
 #![feature(sync_unsafe_cell)]
 
-use core::cell::RefCell;
-use core::fmt::Write;
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
-
-use cortex_m::interrupt::{CriticalSection, Mutex};
-use display::Display;
 use embedded_alloc::Heap;
-use stm32f4xx_hal::pac::SPI1;
-use stm32f4xx_hal::spi::Spi;
-
-use crate::ui::draw_panic_screen;
 mod display;
 mod format;
 mod hardware_config;
 mod measurement;
+mod panic;
 mod ui;
 mod util;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
-
-static PANIC_DISPLAY_REF: Mutex<RefCell<Option<&mut Display<Spi<SPI1>>>>> =
-    Mutex::new(RefCell::new(None));
 
 #[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [SPI2, SPI3, SPI4])]
 mod app {
@@ -36,12 +23,13 @@ mod app {
     use core::num::Wrapping;
 
     use cortex_m_microclock::CYCCNTClock;
+    use enum_dispatch::enum_dispatch;
     use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
     use hal::gpio::{Edge, ErasedPin, Input, Speed};
-    use hal::pac::{self, Interrupt, ADC1, DMA2, SPI1, TIM2};
+    use hal::pac::{self, Interrupt, ADC1, DMA2, TIM2};
     use hal::prelude::*;
     use hal::spi::Spi;
     use hal::timer::{CounterHz, Event, Flag};
@@ -50,9 +38,10 @@ mod app {
     use rtic_monotonics::{create_systick_token, Monotonic};
     use stm32f4xx_hal as hal;
 
-    use crate::display::Display;
-    use crate::hardware_config::{HCLK, IPRIO_ADC_TIMER, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK};
-    use crate::measurement::{CalibrationState, Measurement, MeasurementResult, RingBuffer};
+    use crate::display::{AppDrawTarget, Display};
+    use crate::hardware_config::{self as hw, AllGpio, DisplayType};
+    use crate::measurement::{CalibrationState, Measurement};
+    use crate::panic::set_panic_display_ref;
     use crate::ui::draw_boot_screen;
     use crate::ui::screens::{
         CalibrationScreen, DebugScreen, DebugUiState, MeasurementScreen, ResultsScreen,
@@ -79,8 +68,8 @@ mod app {
         sample_counter: Wrapping<u32>,
         app_mode: AppMode,
         calibration_state: CalibrationState,
-        measurement: Measurement<CycleCounterClock<SYSCLK>>,
-        display: UnsafeCell<Display<Spi<SPI1>>>,
+        measurement: Measurement<CycleCounterClock<{ hw::SYSCLK }>>,
+        display: UnsafeCell<DisplayType>,
     }
 
     #[local]
@@ -104,10 +93,13 @@ mod app {
 
         let mut dp: pac::Peripherals = cx.device;
 
-        let gpioa = dp.GPIOA.split();
-        let gpiob = dp.GPIOB.split();
-        let gpioc = dp.GPIOC.split();
-        let mut backlight_pin = gpiob.pb9.into_push_pull_output();
+        let gpio = AllGpio {
+            a: dp.GPIOA.split(),
+            b: dp.GPIOB.split(),
+            c: dp.GPIOC.split(),
+        };
+
+        let mut backlight_pin = hw::display_backlight_pin!(gpio).into_push_pull_output();
         backlight_pin.set_low();
 
         // Workaround 1 enable prefetch
@@ -132,22 +124,22 @@ mod app {
         let rcc = dp.RCC.constrain();
         let clocks = rcc
             .cfgr
-            .sysclk(SYSCLK.Hz())
+            .sysclk(hw::SYSCLK.Hz())
             // .require_pll48clk()
-            .hclk(HCLK.MHz())
+            .hclk(hw::HCLK.MHz())
             .use_hse(25.MHz())
             .pclk1(80.MHz())
             .pclk2(80.MHz())
             .freeze();
 
-        CYCCNTClock::<SYSCLK>::init(&mut cx.core.DCB, cx.core.DWT);
+        CYCCNTClock::<{ hw::SYSCLK }>::init(&mut cx.core.DCB, cx.core.DWT);
 
         let systick_token = create_systick_token!();
-        Systick::start(cx.core.SYST, SYSCLK, systick_token);
+        Systick::start(cx.core.SYST, hw::SYSCLK, systick_token);
 
-        let mut led_pin = gpioc.pc13.into_push_pull_output();
+        let mut led_pin = hw::led_pin!(gpio).into_push_pull_output();
 
-        let adc_pin = gpioa.pa0.into_analog();
+        let adc_pin = hw::adc_pin!(gpio).into_analog();
         // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
         // Configure ADC for sequence conversion with interrtups
         let adc_config = AdcConfig::default()
@@ -157,7 +149,7 @@ mod app {
             .resolution(Resolution::Eight);
 
         let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
-        adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
+        adc.configure_channel(&adc_pin, Sequence::One, hw::SAMPLE_TIME);
 
         // DMA Configuration
         let dma = StreamsTuple::new(dp.DMA2);
@@ -175,21 +167,24 @@ mod app {
 
         let mut timer = dp.TIM2.counter_hz(&clocks);
         timer.listen(Event::Update);
-        timer.start(SAMPLE_RATE_HZ.Hz()).unwrap();
+        timer.start(hw::SAMPLE_RATE_HZ.Hz()).unwrap();
 
         unsafe {
-            cx.core.NVIC.set_priority(Interrupt::TIM2, IPRIO_ADC_TIMER);
+            cx.core
+                .NVIC
+                .set_priority(Interrupt::TIM2, hw::IPRIO_ADC_TIMER);
         }
 
         //----
 
         let mut delay = dp.TIM3.delay_us(&clocks);
         let mut display = {
-            let mut dc_pin = gpioa.pa8.into_push_pull_output();
-            let mut rst_pin = gpioa.pa11.into_push_pull_output();
-            let mut sclk_pin = gpioa.pa5.into_alternate();
-            let mut miso_pin = gpioa.pa6.into_alternate();
-            let mut mosi_pin = gpioa.pa7.into_alternate();
+            let mut dc_pin = hw::display_dc_pin!(gpio).into_push_pull_output();
+            let mut rst_pin = hw::display_rst_pin!(gpio).into_push_pull_output();
+            let mut sclk_pin = hw::display_sclk_pin!(gpio).into_alternate();
+            let mut miso_pin = hw::display_miso_pin!(gpio).into_alternate();
+            let mut mosi_pin = hw::display_mosi_pin!(gpio).into_alternate();
+
             dc_pin.set_speed(Speed::VeryHigh);
             rst_pin.set_speed(Speed::VeryHigh);
             sclk_pin.set_speed(Speed::VeryHigh);
@@ -199,7 +194,7 @@ mod app {
                 dp.SPI1,
                 (sclk_pin, miso_pin, mosi_pin),
                 embedded_hal::spi::MODE_3,
-                40.MHz(),
+                hw::SPI_FREQ_HZ.MHz(),
                 &clocks,
             );
             let mut display = Display::new(
@@ -215,12 +210,12 @@ mod app {
 
         display.backlight_on();
 
-        let mut mode_button_pin = gpioa.pa1.into_pull_down_input();
+        let mut mode_button_pin = hw::mode_button_pin!(gpio).into_pull_down_input();
         mode_button_pin.make_interrupt_source(&mut syscfg);
         mode_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         mode_button_pin.enable_interrupt(&mut dp.EXTI);
 
-        let mut measure_button_pin = gpioa.pa2.into_pull_down_input();
+        let mut measure_button_pin = hw::measure_button_pin!(gpio).into_pull_down_input();
         measure_button_pin.make_interrupt_source(&mut syscfg);
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
@@ -376,41 +371,25 @@ mod app {
         });
     }
 
+    #[enum_dispatch(Screen)]
+    #[allow(clippy::large_enum_variant, clippy::enum_variant_names)]
+    enum Screens {
+        StartScreen,
+        CalibrationScreen,
+        MeasurementScreen,
+        DebugScreen,
+        ResultsScreen,
+    }
+
     #[task(local=[adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
     async fn display_task(mut cx: display_task::Context) {
-        let local = cx.local;
-
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
 
         draw_boot_screen(display).await;
 
-        let mut start_screen = StartScreen {};
-        let mut calibration_screen = CalibrationScreen {};
-        let mut measurement_screen = MeasurementScreen {};
-        let mut debug_screen = DebugScreen {
-            state: DebugUiState {
-                adc_value: 0,
-                min_adc_value: 0,
-                max_adc_value: 0,
-                adc_history: HistoryBuffer::new(),
-                sample_counter: 0,
-            },
-        };
-        let mut results_screen = ResultsScreen {
-            state: ResultsUiState {
-                calibration: CalibrationState::Done(0),
-                result: MeasurementResult {
-                    duration_micros: 0,
-                    integrated_duration_micros: 0,
-                    sample_buffer: RingBuffer::new(),
-                    samples_since_start: 0,
-                    samples_since_end: 0,
-                },
-            },
-        };
-
         let mut mode = AppMode::None;
+        let mut screen: Screens = StartScreen {}.into();
 
         loop {
             let now = Systick::now();
@@ -423,58 +402,75 @@ mod app {
                 None
             }) {
                 match changed_mode {
-                    AppMode::Calibrating => calibration_screen.draw_init(&mut **display).await,
-                    AppMode::Measure => measurement_screen.draw_init(&mut **display).await,
-                    AppMode::Debug => debug_screen.draw_init(&mut **display).await,
-                    AppMode::Results => results_screen.draw_init(&mut **display).await,
-                    AppMode::Start => start_screen.draw_init(&mut **display).await,
+                    AppMode::Start => {
+                        screen = StartScreen {}.into();
+                    }
+                    AppMode::Calibrating => {
+                        screen = CalibrationScreen {}.into();
+                    }
+                    AppMode::Measure => {
+                        screen = MeasurementScreen {}.into();
+                    }
+                    AppMode::Debug => {
+                        screen = DebugScreen {
+                            state: DebugUiState {
+                                adc_value: 0,
+                                min_adc_value: 0,
+                                max_adc_value: 0,
+                                adc_history: HistoryBuffer::new(),
+                                sample_counter: 0,
+                            },
+                        }
+                        .into();
+                    }
+                    AppMode::Results => {
+                        let calibration = cx
+                            .shared
+                            .calibration_state
+                            .lock(|calibration_state| calibration_state.clone());
+                        let result = cx
+                            .shared
+                            .measurement
+                            .lock(|measurement| measurement.result().cloned())
+                            .unwrap();
+                        screen = ResultsScreen {
+                            state: ResultsUiState {
+                                calibration,
+                                result,
+                            },
+                        }
+                        .into();
+                    }
                     AppMode::None => (),
                 };
+                screen.draw_init(&mut **display).await;
             }
 
-            match mode {
-                AppMode::Debug => {
+            match screen {
+                Screens::DebugScreen(ref mut screen) => {
                     let adc_value = cx.shared.adc_value.lock(|adc_value| *adc_value);
-                    local.adc_history.write(adc_value);
-                    local.adc_avg_window.write(adc_value);
+                    cx.local.adc_history.write(adc_value);
+                    cx.local.adc_avg_window.write(adc_value);
 
-                    let min_adc_value = *local.adc_avg_window.iter().min().unwrap_or(&0);
-                    let max_adc_value = *local.adc_avg_window.iter().max().unwrap_or(&0);
+                    let min_adc_value = *cx.local.adc_avg_window.iter().min().unwrap_or(&0);
+                    let max_adc_value = *cx.local.adc_avg_window.iter().max().unwrap_or(&0);
 
-                    debug_screen.state = DebugUiState {
+                    screen.state = DebugUiState {
                         adc_value,
                         min_adc_value,
                         max_adc_value,
-                        adc_history: local.adc_history.clone(),
+                        adc_history: cx.local.adc_history.clone(),
                         // adc_value: avg_adc_value,
                         sample_counter: cx
                             .shared
                             .sample_counter
                             .lock(|sample_counter| sample_counter.0),
                     };
-                    debug_screen.draw_frame(&mut **display).await;
                 }
-                AppMode::Start => start_screen.draw_frame(&mut **display).await,
-                AppMode::Calibrating => calibration_screen.draw_frame(&mut **display).await,
-                AppMode::Measure => measurement_screen.draw_frame(&mut **display).await,
-                AppMode::Results => {
-                    let calibration = cx
-                        .shared
-                        .calibration_state
-                        .lock(|calibration_state| calibration_state.clone());
-                    let result = cx
-                        .shared
-                        .measurement
-                        .lock(|measurement| measurement.result().cloned())
-                        .unwrap();
-                    results_screen.state = ResultsUiState {
-                        calibration,
-                        result,
-                    };
-                    results_screen.draw_frame(&mut **display).await;
-                }
-                AppMode::None => {}
+                _ => (),
             }
+
+            screen.draw_frame(&mut **display).await;
 
             Systick::delay_until(now + 250.millis()).await;
         }
@@ -483,42 +479,11 @@ mod app {
     #[idle(shared=[display])]
     fn idle(mut cx: idle::Context) -> ! {
         cx.shared.display.lock(|display| {
-            cortex_m::interrupt::free(|cs| {
-                *crate::PANIC_DISPLAY_REF.borrow(cs).borrow_mut() =
-                    Some(unsafe { &mut *display.get() });
-            });
+            set_panic_display_ref(display);
         });
 
         loop {
             rtic::export::wfi()
         }
-    }
-}
-
-#[inline(never)]
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    // We're dying, go all out just this once
-    let cs = unsafe { CriticalSection::new() };
-    let display = PANIC_DISPLAY_REF.borrow(&cs).borrow_mut().take().unwrap();
-
-    unsafe {
-        cortex_m::interrupt::enable();
-    }
-
-    let mut message = heapless::String::<256>::default();
-
-    if write!(message, "{info}").is_err() {
-        let _ = write!(message, "Could not format panic message");
-    }
-
-    draw_panic_screen(&mut **display, message.as_ref());
-
-    cortex_m::interrupt::disable();
-
-    loop {
-        // add some side effect to prevent this from turning into a UDF instruction
-        // see rust-lang/rust#28728 for details
-        atomic::compiler_fence(Ordering::SeqCst);
     }
 }
