@@ -8,8 +8,11 @@ use embedded_hal::blocking::delay::DelayUs;
 use mipidsi::models::ST7789;
 use stm32f4xx_hal::gpio::{ErasedPin, Output};
 
-pub struct Display<SPI: embedded_hal::blocking::spi::Write<u8>> {
-    inner: mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
+pub trait DisplayInterface: embedded_hal::blocking::spi::Write<u8> {}
+impl<W: embedded_hal::blocking::spi::Write<u8>> DisplayInterface for W {}
+
+pub struct Display<DI: DisplayInterface> {
+    inner: mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
     backlight_pin: ErasedPin<Output>,
 }
 
@@ -17,9 +20,9 @@ pub trait AppDrawTarget: DrawTarget<Color = Rgb565, Error = mipidsi::Error> {}
 
 impl<D: DrawTarget<Color = Rgb565, Error = mipidsi::Error>> AppDrawTarget for D {}
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
+impl<DI: DisplayInterface> Display<DI> {
     pub fn new<Delay: DelayUs<u32>>(
-        spi: SPI,
+        spi: DI,
         dc_pin: ErasedPin<Output>,
         rst_pin: ErasedPin<Output>,
         backlight_pin: ErasedPin<Output>,
@@ -64,16 +67,16 @@ impl<SPI: embedded_hal::blocking::spi::Write<u8>> Display<SPI> {
     }
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>> Deref for Display<SPI> {
+impl<DI: DisplayInterface> Deref for Display<DI> {
     type Target =
-        mipidsi::Display<SPIInterfaceNoCS<SPI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>;
+        mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<SPI: embedded_hal::blocking::spi::Write<u8>> DerefMut for Display<SPI> {
+impl<DI: DisplayInterface> DerefMut for Display<DI> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }

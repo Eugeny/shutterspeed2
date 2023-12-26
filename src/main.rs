@@ -52,11 +52,11 @@ mod app {
 
     use crate::display::Display;
     use crate::hardware_config::{HCLK, IPRIO_ADC_TIMER, SAMPLE_RATE_HZ, SAMPLE_TIME, SYSCLK};
-    use crate::measurement::{CalibrationState, Measurement};
-    use crate::ui::{
-        draw_boot_screen, draw_debug_ui, draw_measuring_ui, draw_results_ui, draw_start_ui,
-        init_calibrating_ui, init_debug_ui, init_measuring_ui, init_results_ui, init_start_ui,
-        DebugUiState, ResultsUiState,
+    use crate::measurement::{CalibrationState, Measurement, MeasurementResult, RingBuffer};
+    use crate::ui::draw_boot_screen;
+    use crate::ui::screens::{
+        CalibrationScreen, DebugScreen, DebugUiState, MeasurementScreen, ResultsScreen,
+        ResultsUiState, Screen, StartScreen,
     };
     use crate::util::CycleCounterClock;
 
@@ -385,6 +385,31 @@ mod app {
 
         draw_boot_screen(display).await;
 
+        let mut start_screen = StartScreen {};
+        let mut calibration_screen = CalibrationScreen {};
+        let mut measurement_screen = MeasurementScreen {};
+        let mut debug_screen = DebugScreen {
+            state: DebugUiState {
+                adc_value: 0,
+                min_adc_value: 0,
+                max_adc_value: 0,
+                adc_history: HistoryBuffer::new(),
+                sample_counter: 0,
+            },
+        };
+        let mut results_screen = ResultsScreen {
+            state: ResultsUiState {
+                calibration: CalibrationState::Done(0),
+                result: MeasurementResult {
+                    duration_micros: 0,
+                    integrated_duration_micros: 0,
+                    sample_buffer: RingBuffer::new(),
+                    samples_since_start: 0,
+                    samples_since_end: 0,
+                },
+            },
+        };
+
         let mut mode = AppMode::None;
 
         loop {
@@ -398,11 +423,11 @@ mod app {
                 None
             }) {
                 match changed_mode {
-                    AppMode::Calibrating => init_calibrating_ui(display).await,
-                    AppMode::Measure => init_measuring_ui(display).await,
-                    AppMode::Debug => init_debug_ui(display),
-                    AppMode::Results => init_results_ui(display).await,
-                    AppMode::Start => init_start_ui(display).await,
+                    AppMode::Calibrating => calibration_screen.draw_init(&mut **display).await,
+                    AppMode::Measure => measurement_screen.draw_init(&mut **display).await,
+                    AppMode::Debug => debug_screen.draw_init(&mut **display).await,
+                    AppMode::Results => results_screen.draw_init(&mut **display).await,
+                    AppMode::Start => start_screen.draw_init(&mut **display).await,
                     AppMode::None => (),
                 };
             }
@@ -416,24 +441,22 @@ mod app {
                     let min_adc_value = *local.adc_avg_window.iter().min().unwrap_or(&0);
                     let max_adc_value = *local.adc_avg_window.iter().max().unwrap_or(&0);
 
-                    draw_debug_ui(
-                        display,
-                        &mut DebugUiState {
-                            adc_value,
-                            min_adc_value,
-                            max_adc_value,
-                            adc_history: local.adc_history,
-                            // adc_value: avg_adc_value,
-                            sample_counter: cx
-                                .shared
-                                .sample_counter
-                                .lock(|sample_counter| sample_counter.0),
-                        },
-                    );
+                    debug_screen.state = DebugUiState {
+                        adc_value,
+                        min_adc_value,
+                        max_adc_value,
+                        adc_history: local.adc_history.clone(),
+                        // adc_value: avg_adc_value,
+                        sample_counter: cx
+                            .shared
+                            .sample_counter
+                            .lock(|sample_counter| sample_counter.0),
+                    };
+                    debug_screen.draw_frame(&mut **display).await;
                 }
-                AppMode::Start => draw_start_ui(display),
-                AppMode::Calibrating => {}
-                AppMode::Measure => draw_measuring_ui(display),
+                AppMode::Start => start_screen.draw_frame(&mut **display).await,
+                AppMode::Calibrating => calibration_screen.draw_frame(&mut **display).await,
+                AppMode::Measure => measurement_screen.draw_frame(&mut **display).await,
                 AppMode::Results => {
                     let calibration = cx
                         .shared
@@ -444,13 +467,11 @@ mod app {
                         .measurement
                         .lock(|measurement| measurement.result().cloned())
                         .unwrap();
-                    draw_results_ui(
-                        display,
-                        &ResultsUiState {
-                            calibration,
-                            result,
-                        },
-                    )
+                    results_screen.state = ResultsUiState {
+                        calibration,
+                        result,
+                    };
+                    results_screen.draw_frame(&mut **display).await;
                 }
                 AppMode::None => {}
             }
