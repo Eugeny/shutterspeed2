@@ -8,7 +8,7 @@ pub use calibration::CalibrationScreen;
 pub use debug::{DebugScreen, DebugUiState};
 use enum_dispatch::enum_dispatch;
 pub use measurement::MeasurementScreen;
-pub use results::{ResultsScreen, ResultsUiState};
+pub use results::ResultsScreen;
 pub use start::StartScreen;
 
 use crate::display::AppDrawTarget;

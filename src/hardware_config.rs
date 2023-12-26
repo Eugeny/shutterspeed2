@@ -5,6 +5,8 @@ use stm32f4xx_hal as hal;
 
 use crate::display::Display;
 
+pub const CALIBRATION_TIME_MS: u32 = 1000;
+
 pub const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
 pub const SAMPLE_RATE_HZ: u32 = 50_000_u32;
 pub const SYSCLK: u32 = 84_000_000;

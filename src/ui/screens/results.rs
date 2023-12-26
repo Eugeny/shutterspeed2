@@ -10,12 +10,9 @@ use crate::measurement::{CalibrationState, MeasurementResult};
 use crate::ui::fonts::{LARGE_DIGIT_FONT, SMALL_FONT, TINY_FONT};
 use crate::ui::{draw_chart, draw_speed_ruler};
 
-pub struct ResultsUiState {
+pub struct ResultsScreen {
     pub calibration: CalibrationState,
     pub result: MeasurementResult,
-}
-pub struct ResultsScreen {
-    pub state: ResultsUiState,
 }
 
 impl Screen for ResultsScreen {
@@ -26,7 +23,7 @@ impl Screen for ResultsScreen {
     async fn draw_frame<DT: AppDrawTarget>(&mut self, display: &mut DT) {
         let exposure_time_origin = Point::new(20, 100);
         {
-            let duration_micros = self.state.result.integrated_duration_micros.max(1);
+            let duration_micros = self.result.integrated_duration_micros.max(1);
             let mut s = String::<128>::default();
 
             let dim = if duration_micros < 500_000 {
@@ -100,7 +97,7 @@ impl Screen for ResultsScreen {
         {
             let mut s = String::<128>::default();
             s.push(' ').unwrap();
-            write_micros(&mut s, self.state.result.integrated_duration_micros);
+            write_micros(&mut s, self.result.integrated_duration_micros);
             let _ = s.push(' ');
             TINY_FONT
                 .render(
@@ -154,16 +151,16 @@ impl Screen for ResultsScreen {
 
         draw_speed_ruler(
             display,
-            Point::new(0, 215),
-            self.state.result.integrated_duration_micros as f32 / 1_000_000.0,
+            Point::new(0, 280),
+            self.result.integrated_duration_micros as f32 / 1_000_000.0,
         );
 
         draw_chart(
             display,
-            &self.state.result.sample_buffer,
+            &self.result.sample_buffer,
             25,
-            Some(self.state.result.samples_since_start),
-            Some(self.state.result.samples_since_end),
+            Some(self.result.samples_since_start),
+            Some(self.result.samples_since_end),
             false,
         );
     }

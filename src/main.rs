@@ -44,8 +44,8 @@ mod app {
     use crate::panic::set_panic_display_ref;
     use crate::ui::draw_boot_screen;
     use crate::ui::screens::{
-        CalibrationScreen, DebugScreen, DebugUiState, MeasurementScreen, ResultsScreen,
-        ResultsUiState, Screen, StartScreen,
+        CalibrationScreen, DebugScreen, DebugUiState, MeasurementScreen, ResultsScreen, Screen,
+        StartScreen,
     };
     use crate::util::CycleCounterClock;
 
@@ -194,7 +194,7 @@ mod app {
                 dp.SPI1,
                 (sclk_pin, miso_pin, mosi_pin),
                 embedded_hal::spi::MODE_3,
-                hw::SPI_FREQ_HZ.MHz(),
+                hw::SPI_FREQ_HZ.Hz(),
                 &clocks,
             );
             let mut display = Display::new(
@@ -270,16 +270,9 @@ mod app {
         ctx.local.mode_button_pin.clear_interrupt_pending_bit();
     }
 
-    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin], priority = 4)]
-    fn measure_button_press(mut ctx: measure_button_press::Context) {
-        ctx.shared.app_mode.lock(|app_mode| {
-            if *app_mode == AppMode::Measure {
-                *app_mode = AppMode::Start;
-            } else {
-                let _ = measure_task::spawn();
-            }
-        });
-
+    #[task(binds = EXTI2, local=[measure_button_pin], priority = 4)]
+    fn measure_button_press(ctx: measure_button_press::Context) {
+        let _ = measure_task::spawn();
         ctx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
@@ -338,7 +331,7 @@ mod app {
             calibration_state.begin();
         });
 
-        Systick::delay(1.secs()).await;
+        Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
 
         let calibration_value = ctx.shared.calibration_state.lock(|state| state.finish());
         ctx.shared.measurement.lock(|measurement| {
@@ -424,20 +417,16 @@ mod app {
                         .into();
                     }
                     AppMode::Results => {
-                        let calibration = cx
-                            .shared
-                            .calibration_state
-                            .lock(|calibration_state| calibration_state.clone());
+                        let calibration = cx.shared.calibration_state.lock(core::mem::take);
                         let result = cx
                             .shared
                             .measurement
-                            .lock(|measurement| measurement.result().cloned())
+                            .lock(core::mem::take)
+                            .take_result()
                             .unwrap();
                         screen = ResultsScreen {
-                            state: ResultsUiState {
-                                calibration,
-                                result,
-                            },
+                            calibration,
+                            result,
                         }
                         .into();
                     }

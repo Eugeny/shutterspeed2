@@ -29,7 +29,7 @@ impl<DI: DisplayInterface> Display<DI> {
     ) -> Self {
         let di = SPIInterfaceNoCS::new(spi, dc_pin);
         let display = mipidsi::Builder::st7789(di)
-            .with_orientation(mipidsi::Orientation::Landscape(true))
+            .with_orientation(mipidsi::Orientation::Portrait(false))
             .with_invert_colors(mipidsi::ColorInversion::Inverted)
             .init(delay, Some(rst_pin))
             .unwrap();

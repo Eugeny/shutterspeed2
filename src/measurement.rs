@@ -46,10 +46,40 @@ impl CalibrationState {
     }
 }
 
+impl Default for CalibrationState {
+    fn default() -> Self {
+        Self::Done(0)
+    }
+}
+
 pub type RingPreBuffer = HistoryBuffer<u16, 1000>;
 pub type RingBuffer = HistoryBuffer<u16, 1000>;
 
 const MARGIN_SAMPLES: usize = 200;
+
+#[derive(Copy, Clone)]
+pub struct SampleRate {
+    sample_rate: u32,
+    sample_rate_counter: u32,
+}
+
+impl SampleRate {
+    fn new(sample_rate: u32) -> Self {
+        Self {
+            sample_rate,
+            sample_rate_counter: 0,
+        }
+    }
+
+    fn step(&mut self) -> bool {
+        self.sample_rate_counter = (self.sample_rate_counter + 1) % self.sample_rate;
+        self.sample_rate_counter == 0
+    }
+
+    fn halve(&mut self) {
+        self.sample_rate *= 2;
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct MeasurementResult {
@@ -70,8 +100,7 @@ pub enum MeasurementState<M: LaxMonotonic> {
         samples_since_start: usize,
         peak: u16,
         integrated: u64, // samples x (abs value)
-        sample_rate: u32,
-        sample_rate_counter: u32,
+        sample_rate: SampleRate,
     },
     Trailing {
         samples_since_start: usize,
@@ -79,6 +108,7 @@ pub enum MeasurementState<M: LaxMonotonic> {
         duration_micros: u64,
         integrated_duration_micros: u64,
         sample_buffer: RingBuffer,
+        sample_rate: SampleRate,
     },
     Done(MeasurementResult),
 }
@@ -90,6 +120,13 @@ pub struct Measurement<M: LaxMonotonic> {
 
     expected_high: u16,
     level_low: u16,
+}
+
+
+impl<M: LaxMonotonic> Default for Measurement<M> {
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 impl<M: LaxMonotonic> Measurement<M> {
@@ -143,8 +180,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                         peak: value,
                         samples_since_start: 0,
                         integrated: 0,
-                        sample_rate: 1,
-                        sample_rate_counter: 0,
+                        sample_rate: SampleRate::new(1),
                     };
                 }
             }
@@ -155,11 +191,8 @@ impl<M: LaxMonotonic> Measurement<M> {
                 ref mut integrated,
                 ref mut peak,
                 ref mut sample_rate,
-                ref mut sample_rate_counter,
             } => {
-                *sample_rate_counter = (*sample_rate_counter + 1) % *sample_rate;
-                if *sample_rate_counter != 0 {
-                    // Discard sample
+                if !sample_rate.step() {
                     return;
                 }
 
@@ -178,7 +211,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                     *sample_buffer = new_buffer;
                     *samples_since_start /= 2;
                     *integrated /= 2;
-                    *sample_rate *= 2;
+                    sample_rate.halve();
                 }
 
                 if value < self.level_low {
@@ -202,6 +235,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                         samples_since_start: *samples_since_start,
                         samples_since_end: 0,
                         integrated_duration_micros,
+                        sample_rate: *sample_rate,
                     };
                     return;
                 }
@@ -219,15 +253,22 @@ impl<M: LaxMonotonic> Measurement<M> {
                 ref mut samples_since_start,
                 ref mut samples_since_end,
                 integrated_duration_micros,
+                ref mut sample_rate,
             } => {
-                if *samples_since_end < MARGIN_SAMPLES {
+                if !sample_rate.step() {
+                    return;
+                }
+
+                let margin = MARGIN_SAMPLES / sample_rate.sample_rate as usize;
+
+                if *samples_since_end < margin {
                     sample_buffer.write(value);
                     *samples_since_end += 1;
                     *samples_since_start += 1;
                 } else {
                     // Reduce margins for short exposures
                     let final_margin =
-                        MARGIN_SAMPLES.min(*samples_since_start - *samples_since_end);
+                        margin.min(*samples_since_start - *samples_since_end);
 
                     let buffer_len = sample_buffer.len();
                     let iter = sample_buffer.oldest_ordered();
@@ -245,8 +286,8 @@ impl<M: LaxMonotonic> Measurement<M> {
                     let mut final_buffer = RingBuffer::new();
                     final_buffer.extend(iter);
 
-                    *samples_since_start -= MARGIN_SAMPLES - final_margin;
-                    *samples_since_end -= MARGIN_SAMPLES - final_margin;
+                    *samples_since_start -= margin - final_margin;
+                    *samples_since_end -= margin - final_margin;
 
                     self.state = MeasurementState::Done(MeasurementResult {
                         duration_micros: *duration_micros,
@@ -261,9 +302,9 @@ impl<M: LaxMonotonic> Measurement<M> {
         }
     }
 
-    pub fn result(&self) -> Option<&MeasurementResult> {
+    pub fn take_result(self) -> Option<MeasurementResult> {
         match self.state {
-            MeasurementState::Done(ref result) => Some(result),
+            MeasurementState::Done(result) => Some(result),
             _ => None,
         }
     }
