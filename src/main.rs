@@ -21,10 +21,11 @@ static HEAP: Heap = Heap::empty();
 mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
+    use core::panic;
 
     use cortex_m_microclock::CYCCNTClock;
     use enum_dispatch::enum_dispatch;
-    use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, Scan, Sequence};
+    use hal::adc::config::{AdcConfig, Clock, Dma, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
@@ -33,7 +34,6 @@ mod app {
     use hal::prelude::*;
     use hal::spi::Spi;
     use hal::timer::{CounterHz, Event, Flag};
-    use heapless::HistoryBuffer;
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
     use stm32f4xx_hal as hal;
@@ -44,8 +44,7 @@ mod app {
     use crate::panic::set_panic_display_ref;
     use crate::ui::draw_boot_screen;
     use crate::ui::screens::{
-        CalibrationScreen, DebugScreen, DebugUiState, MeasurementScreen, ResultsScreen, Screen,
-        StartScreen,
+        CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen, StartScreen,
     };
     use crate::util::CycleCounterClock;
 
@@ -76,8 +75,6 @@ mod app {
     struct Local {
         adc_dma_buffer: Option<&'static mut u16>,
         timer: CounterHz<TIM2>,
-        adc_history: HistoryBuffer<u16, 100>,
-        adc_avg_window: HistoryBuffer<u16, 4>,
         mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
     }
@@ -146,7 +143,7 @@ mod app {
             .dma(Dma::Continuous)
             .scan(Scan::Disabled)
             .clock(Clock::Pclk2_div_6)
-            .resolution(Resolution::Eight);
+            .resolution(hw::ADC_RESOLUTION);
 
         let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
         adc.configure_channel(&adc_pin, Sequence::One, hw::SAMPLE_TIME);
@@ -238,8 +235,6 @@ mod app {
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
                 timer,
-                adc_history: HistoryBuffer::new(),
-                adc_avg_window: HistoryBuffer::new(),
                 mode_button_pin: mode_button_pin.erase(),
                 measure_button_pin: measure_button_pin.erase(),
             },
@@ -257,23 +252,27 @@ mod app {
     }
 
     #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 4)]
-    fn mode_button_press(mut ctx: mode_button_press::Context) {
-        ctx.shared.app_mode.lock(|app_mode| {
-            *app_mode = match *app_mode {
-                AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
-                    AppMode::Debug
-                }
-                AppMode::Debug => AppMode::Start,
-                x => x,
+    fn mode_button_press(mut cx: mode_button_press::Context) {
+        cx.shared.app_mode.lock(|app_mode| match app_mode {
+            AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
+                debug_task::spawn().unwrap();
             }
+            AppMode::Debug => {
+                *app_mode = AppMode::Start;
+                debug_task::spawn().unwrap();
+            }
+            _ => (),
         });
-        ctx.local.mode_button_pin.clear_interrupt_pending_bit();
+        cx.local.mode_button_pin.clear_interrupt_pending_bit();
     }
 
-    #[task(binds = EXTI2, local=[measure_button_pin], priority = 4)]
-    fn measure_button_press(ctx: measure_button_press::Context) {
+    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin], priority = 4)]
+    fn measure_button_press(mut cx: measure_button_press::Context) {
+        cx.shared.app_mode.lock(|app_mode| {
+            *app_mode = AppMode::Start;
+        });
         let _ = measure_task::spawn();
-        ctx.local.measure_button_pin.clear_interrupt_pending_bit();
+        cx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
     #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [adc_dma_buffer], priority = 3)]
@@ -319,7 +318,7 @@ mod app {
         //         *app_mode = AppMode::Results;
         //     });
         //     ctx.shared.measurement.lock(|measurement| {
-        //         *measurement = Measurement::new_debug_duration(12);
+        //         *measurement = Measurement::new_debug_duration(7);
         //     });
         //     return;
         // }
@@ -364,6 +363,22 @@ mod app {
         });
     }
 
+    #[task(shared=[app_mode, calibration_state], priority=2)]
+    async fn debug_task(mut ctx: debug_task::Context) {
+        ctx.shared.app_mode.lock(|app_mode| {
+            *app_mode = AppMode::Calibrating;
+        });
+        ctx.shared.calibration_state.lock(|calibration_state| {
+            calibration_state.begin();
+        });
+
+        Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
+
+        ctx.shared.app_mode.lock(|app_mode| {
+            *app_mode = AppMode::Debug;
+        });
+    }
+
     #[enum_dispatch(Screen)]
     #[allow(clippy::large_enum_variant, clippy::enum_variant_names)]
     enum Screens {
@@ -374,7 +389,7 @@ mod app {
         ResultsScreen,
     }
 
-    #[task(local=[adc_history, adc_avg_window], shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
+    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
     async fn display_task(mut cx: display_task::Context) {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
@@ -405,15 +420,9 @@ mod app {
                         screen = MeasurementScreen {}.into();
                     }
                     AppMode::Debug => {
-                        screen = DebugScreen {
-                            state: DebugUiState {
-                                adc_value: 0,
-                                min_adc_value: 0,
-                                max_adc_value: 0,
-                                adc_history: HistoryBuffer::new(),
-                                sample_counter: 0,
-                            },
-                        }
+                        screen = DebugScreen::new(
+                            cx.shared.calibration_state.lock(core::mem::take).finish(),
+                        )
                         .into();
                     }
                     AppMode::Results => {
@@ -438,30 +447,19 @@ mod app {
             match screen {
                 Screens::DebugScreen(ref mut screen) => {
                     let adc_value = cx.shared.adc_value.lock(|adc_value| *adc_value);
-                    cx.local.adc_history.write(adc_value);
-                    cx.local.adc_avg_window.write(adc_value);
-
-                    let min_adc_value = *cx.local.adc_avg_window.iter().min().unwrap_or(&0);
-                    let max_adc_value = *cx.local.adc_avg_window.iter().max().unwrap_or(&0);
-
-                    screen.state = DebugUiState {
-                        adc_value,
-                        min_adc_value,
-                        max_adc_value,
-                        adc_history: cx.local.adc_history.clone(),
-                        // adc_value: avg_adc_value,
-                        sample_counter: cx
-                            .shared
-                            .sample_counter
-                            .lock(|sample_counter| sample_counter.0),
-                    };
+                    screen.step(adc_value);
                 }
                 _ => (),
             }
 
             screen.draw_frame(&mut **display).await;
 
-            Systick::delay_until(now + 250.millis()).await;
+            let deadline = if matches!(screen, Screens::DebugScreen(_)) {
+                Systick::now() + 5.millis()
+            } else {
+                now + 250.millis()
+            };
+            Systick::delay_until(deadline).await;
         }
     }
 
@@ -474,5 +472,15 @@ mod app {
         loop {
             rtic::export::wfi()
         }
+    }
+
+    #[task(binds=BusFault)]
+    fn bus_fault(_cx: bus_fault::Context) {
+        panic!("BusFault");
+    }
+
+    #[task(binds=UsageFault)]
+    fn usage_fault(_cx: usage_fault::Context) {
+        panic!("UsageFault");
     }
 }

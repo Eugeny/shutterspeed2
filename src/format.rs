@@ -10,12 +10,3 @@ pub fn write_fraction<E: Debug, W: uWrite<Error=E>>(s: &mut W, fraction: f32) {
         uwrite!(s, ".{}", fr as u32).unwrap();
     }
 }
-
-pub fn write_micros<E: Debug, W: uWrite<Error=E>>(s: &mut W, micros: u64) {
-    if micros > 10000 {
-        let millis = micros / 1000;
-        uwrite!(s, "{} ms", millis).unwrap();
-    } else {
-        uwrite!(s, "{} us", micros).unwrap();
-    }
-}

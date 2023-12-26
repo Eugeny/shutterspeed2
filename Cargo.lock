@@ -189,6 +189,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-graphics-framebuf"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22354420f68727fa24d1e2741dae1e9a041065e80fb63b35a8d19c647a85be76"
+dependencies = [
+ "embedded-dma",
+ "embedded-graphics",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -715,6 +725,7 @@ dependencies = [
  "display-interface-spi",
  "embedded-alloc",
  "embedded-graphics",
+ "embedded-graphics-framebuf",
  "embedded-hal 0.2.7",
  "embedded-text",
  "embedded-time",

@@ -1,4 +1,5 @@
-use hal::adc::config::SampleTime;
+use embedded_graphics::pixelcolor::{Rgb565, WebColors, RgbColor};
+use hal::adc::config::{Resolution, SampleTime};
 use hal::pac::SPI1;
 use hal::spi::Spi;
 use stm32f4xx_hal as hal;
@@ -6,6 +7,9 @@ use stm32f4xx_hal as hal;
 use crate::display::Display;
 
 pub const CALIBRATION_TIME_MS: u32 = 1000;
+pub const TRIGGER_THRESHOLD_LOW: f32 = 1.3;
+pub const TRIGGER_THRESHOLD_HIGH: f32 = 1.5;
+pub const ADC_RESOLUTION: Resolution = Resolution::Eight;
 
 pub const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
 pub const SAMPLE_RATE_HZ: u32 = 50_000_u32;
@@ -14,6 +18,12 @@ pub const HCLK: u32 = 42_000_000;
 pub const SPI_FREQ_HZ: u32 = 40_000_000;
 
 pub const IPRIO_ADC_TIMER: u8 = 5;
+
+pub const COLOR_LEVEL: Rgb565 = Rgb565::CSS_PALE_GREEN;
+pub const COLOR_NOISE: Rgb565 = Rgb565::RED;
+pub const COLOR_CALIBRATION: Rgb565 = Rgb565::YELLOW;
+pub const COLOR_TRIGGER_HIGH: Rgb565 = Rgb565::CSS_TURQUOISE;
+pub const COLOR_TRIGGER_LOW: Rgb565 = Rgb565::CSS_DARK_ORANGE;
 
 pub type DisplayType = Display<Spi<SPI1>>;
 

@@ -1,4 +1,5 @@
 pub mod fonts;
+pub mod primitives;
 pub mod screens;
 
 use core::ops::DerefMut;
@@ -6,7 +7,7 @@ use core::ops::DerefMut;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::primitives::Rectangle;
-use embedded_graphics::{Drawable, Pixel};
+use embedded_graphics::Drawable;
 use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use hal::prelude::*;
@@ -19,8 +20,41 @@ use u8g2_fonts::U8g2TextStyle;
 use ufmt::uwrite;
 
 use self::fonts::{TinyFont, SMALL_FONT, TINY_FONT};
+use self::primitives::{Cross, Pointer};
 use crate::display::AppDrawTarget;
+use crate::hardware_config as hw;
 use crate::hardware_config::DisplayType;
+
+const KNOWN_SHUTTER_DURATIONS: [f32; 18] = [
+    8.0,
+    4.0,
+    2.0,
+    1.0,
+    1.0 / 2.0,
+    1.0 / 4.0,
+    1.0 / 8.0,
+    1.0 / 15.0,
+    1.0 / 30.0,
+    1.0 / 60.0,
+    1.0 / 125.0,
+    1.0 / 250.0,
+    1.0 / 500.0,
+    1.0 / 1000.0,
+    1.0 / 2000.0,
+    1.0 / 4000.0,
+    1.0 / 8000.0,
+    1.0 / 16000.0,
+];
+
+pub fn get_closest_shutter_speed(duration: f32) -> f32 {
+    let mut best_match = 1.0;
+    for d in KNOWN_SHUTTER_DURATIONS.iter() {
+        if (d.log2() - duration.log2()).abs() < (best_match.log2() - duration.log2()).abs() {
+            best_match = *d;
+        }
+    }
+    best_match
+}
 
 fn draw_speed_ruler<D: AppDrawTarget>(display: &mut D, origin: Point, actual_duration_secs: f32) {
     let width = display.bounding_box().size.width;
@@ -31,27 +65,6 @@ fn draw_speed_ruler<D: AppDrawTarget>(display: &mut D, origin: Point, actual_dur
     let actual_x = origin.x + duration_to_x_offset(actual_duration_secs);
 
     let overall_x_offset = width as i32 / 2 - actual_x;
-
-    let known_durations = [
-        8.0,
-        4.0,
-        2.0,
-        1.0,
-        1.0 / 2.0,
-        1.0 / 4.0,
-        1.0 / 8.0,
-        1.0 / 15.0,
-        1.0 / 30.0,
-        1.0 / 60.0,
-        1.0 / 125.0,
-        1.0 / 250.0,
-        1.0 / 500.0,
-        1.0 / 1000.0,
-        1.0 / 2000.0,
-        1.0 / 4000.0,
-        1.0 / 8000.0,
-        1.0 / 16000.0,
-    ];
 
     display
         .fill_contiguous(
@@ -78,16 +91,9 @@ fn draw_speed_ruler<D: AppDrawTarget>(display: &mut D, origin: Point, actual_dur
         )
         .unwrap();
 
-    let mut best_match = 1.0;
-    for duration in known_durations.iter() {
-        if (duration.log2() - actual_duration_secs.log2()).abs()
-            < (best_match.log2() - actual_duration_secs.log2()).abs()
-        {
-            best_match = *duration;
-        }
-    }
+    let best_match = get_closest_shutter_speed(actual_duration_secs);
 
-    for duration in known_durations.iter() {
+    for duration in KNOWN_SHUTTER_DURATIONS.iter() {
         let x = origin.x + overall_x_offset + duration_to_x_offset(*duration);
         let y = origin.y;
         let mut s = String::<128>::default();
@@ -101,13 +107,9 @@ fn draw_speed_ruler<D: AppDrawTarget>(display: &mut D, origin: Point, actual_dur
         };
         if best_match == *duration {
             color = Rgb565::MAGENTA;
-            draw_triangle(
-                display,
-                Point::new(x, y - ruler_height - 1),
-                10,
-                false,
-                color,
-            );
+            Pointer::new(Point::new(x, y - ruler_height - 1), 10, false, color)
+                .draw(display)
+                .unwrap();
         }
 
         let label_size = TINY_FONT
@@ -152,13 +154,14 @@ fn draw_speed_ruler<D: AppDrawTarget>(display: &mut D, origin: Point, actual_dur
             .unwrap();
     }
 
-    draw_triangle(
-        display,
+    Pointer::new(
         Point::new(overall_x_offset + actual_x - 2, origin.y - ruler_height - 1),
         12,
         false,
         Rgb565::WHITE,
-    );
+    )
+    .draw(display)
+    .unwrap();
 }
 
 fn draw_chart<const LEN: usize, D: AppDrawTarget>(
@@ -179,8 +182,13 @@ fn draw_chart<const LEN: usize, D: AppDrawTarget>(
         display.fill_solid(&graph_rect, Rgb565::BLACK).unwrap();
     }
 
-    let min = chart.iter().min().cloned().unwrap_or(0);
-    let max = chart.iter().max().cloned().unwrap_or(0).max(min + 1);
+    let mut y_min = chart.iter().min().cloned().unwrap_or(0);
+    let mut y_max = chart.iter().max().cloned().unwrap_or(0).max(y_min + 1);
+
+    if (y_max - y_min) < 10 {
+        y_max = y_max.saturating_add(50);
+        y_min = y_min.saturating_sub(50)
+    }
 
     let chunk_size = ((len as f32 / width as f32).ceil() as u32).max(1);
     let mut i = 0;
@@ -189,9 +197,9 @@ fn draw_chart<const LEN: usize, D: AppDrawTarget>(
 
     let xy_to_coords = |x: u16, y: u16| {
         let x = x / chunk_size as u16;
-        let y = (y - min) as i32;
+        let y = (y - y_min) as i32;
 
-        let y = y * graph_rect.size.height as i32 / (max - min) as i32;
+        let y = y * graph_rect.size.height as i32 / (y_max - y_min) as i32;
 
         let x = x as i32 + graph_rect.top_left.x;
         let y = graph_rect.bottom_right().unwrap().y - y;
@@ -228,14 +236,14 @@ fn draw_chart<const LEN: usize, D: AppDrawTarget>(
                         Point::new(x, y),
                         Point::new(x, graph_rect.bottom_right().unwrap().y),
                     ),
-                    Rgb565::CSS_DARK_SLATE_BLUE,
+                    Rgb565::CSS_DARK_RED,
                 )
                 .unwrap();
         }
         display
             .fill_solid(
                 &Rectangle::new(Point::new(x, y), Size::new(2, 2)),
-                Rgb565::WHITE,
+                Rgb565::RED,
             )
             .unwrap();
 
@@ -247,14 +255,18 @@ fn draw_chart<const LEN: usize, D: AppDrawTarget>(
         let start_x = chart.len() - samples_since_start;
         if let Some(start_y) = chart.get(start_x) {
             let (x, y) = xy_to_coords(start_x as u16, *start_y);
-            draw_cross(display, Point::new(x, y), 2, Rgb565::GREEN);
-            draw_triangle(
-                display,
-                Point::new(x, graph_bottom),
+            Cross::new(Point::new(x, y), 5, hw::COLOR_TRIGGER_HIGH)
+                .draw(display)
+                .unwrap();
+
+            Pointer::new(
+                Point::new(x, graph_bottom + 10),
                 10,
                 true,
-                Rgb565::GREEN,
-            );
+                hw::COLOR_TRIGGER_HIGH,
+            )
+            .draw(display)
+            .unwrap();
         }
     }
 
@@ -262,8 +274,17 @@ fn draw_chart<const LEN: usize, D: AppDrawTarget>(
         let end_x = chart.len() - samples_since_end;
         if let Some(end_y) = chart.get(end_x) {
             let (x, y) = xy_to_coords(end_x as u16, *end_y);
-            draw_cross(display, Point::new(x, y), 2, Rgb565::RED);
-            draw_triangle(display, Point::new(x, graph_bottom), 10, true, Rgb565::RED);
+            Cross::new(Point::new(x, y), 5, hw::COLOR_TRIGGER_LOW)
+                .draw(display)
+                .unwrap();
+            Pointer::new(
+                Point::new(x, graph_bottom + 10),
+                10,
+                true,
+                hw::COLOR_TRIGGER_LOW,
+            )
+            .draw(display)
+            .unwrap();
         }
     }
 }
@@ -272,7 +293,9 @@ pub async fn draw_boot_screen(display: &mut DisplayType) {
     let x = (display.width() / 2) as i32;
     let y = (display.height() / 2) as i32;
 
-    draw_cross(display.deref_mut(), Point::new(x, y + 10), 20, Rgb565::RED);
+    Cross::new(Point::new(x, y + 10), 20, Rgb565::RED)
+        .draw(display.deref_mut())
+        .unwrap();
     draw_badge(
         &mut **display,
         Point::new(x, y),
@@ -289,12 +312,9 @@ pub async fn draw_boot_screen(display: &mut DisplayType) {
         Rgb565::BLACK,
     )
     .await;
-    draw_cross(
-        display.deref_mut(),
-        Point::new(x, y + 10),
-        30,
-        Rgb565::WHITE,
-    );
+    Cross::new(Point::new(x, y + 10), 30, Rgb565::WHITE)
+        .draw(display.deref_mut())
+        .unwrap();
     draw_badge(
         &mut **display,
         Point::new(x, y),
@@ -304,56 +324,6 @@ pub async fn draw_boot_screen(display: &mut DisplayType) {
     )
     .await;
     Systick::delay(150.millis()).await;
-}
-
-const THICKENING_OFFSETS: [Point; 4] = [
-    Point::new(0, 0),
-    Point::new(1, 0),
-    Point::new(0, 1),
-    Point::new(1, 1),
-];
-
-pub fn draw_cross<D: AppDrawTarget>(display: &mut D, point: Point, size: u32, color: Rgb565) {
-    for dir in [-1, 1] {
-        for offset in THICKENING_OFFSETS {
-            display
-                .draw_iter(
-                    (-(size as i32)..size as i32)
-                        .map(|i| Pixel(offset + Point::new(point.x + i, point.y + i * dir), color)),
-                )
-                .unwrap();
-        }
-    }
-}
-
-pub fn draw_triangle<D: AppDrawTarget>(
-    display: &mut D,
-    point: Point,
-    size: u32,
-    upside_down: bool,
-    color: Rgb565,
-) {
-    let sy = if upside_down { -1 } else { 1 };
-    for offset in THICKENING_OFFSETS {
-        for dir in [-1, 1] {
-            display
-                .draw_iter((0..size as i32).map(|i| {
-                    Pixel(
-                        offset + Point::new(point.x + dir * i, point.y - i * sy),
-                        color,
-                    )
-                }))
-                .unwrap();
-        }
-        display
-            .draw_iter((-(size as i32)..size as i32).map(|i| {
-                Pixel(
-                    offset + Point::new(point.x + i, point.y - size as i32 * sy),
-                    color,
-                )
-            }))
-            .unwrap();
-    }
 }
 
 pub async fn draw_badge<D: AppDrawTarget>(
@@ -397,12 +367,8 @@ pub fn draw_panic_screen<D: AppDrawTarget>(display: &mut D, message: &str) {
         .unwrap();
 
     for d in [-1, 0, 1] {
-        draw_cross(
-            display,
-            Point::new(width as i32 / 2 + d * 40, 50),
-            15,
-            Rgb565::BLACK,
-        );
+        let _ =
+            Cross::new(Point::new(width as i32 / 2 + d * 40, 50), 15, Rgb565::BLACK).draw(display);
     }
 
     TINY_FONT

@@ -5,7 +5,7 @@ mod results;
 mod start;
 
 pub use calibration::CalibrationScreen;
-pub use debug::{DebugScreen, DebugUiState};
+pub use debug::DebugScreen;
 use enum_dispatch::enum_dispatch;
 pub use measurement::MeasurementScreen;
 pub use results::ResultsScreen;
