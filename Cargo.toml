@@ -10,7 +10,7 @@ cortex-m = "*"
 cortex-m-rt = "0.7.3"
 cortex-m-semihosting = "0.5.0"
 embedded-hal = "*"
-stm32f4xx-hal = { version = "0.19", features = ["stm32f401"] }
+stm32f4xx-hal = { version = "0.19", features = ["stm32f401", "otg-fs", "usb_fs"] }
 
 mipidsi = "0.7.1"
 display-interface-spi = "0.4.1"
@@ -36,6 +36,9 @@ micromath = { version = "2.1.0", features = ["num-traits"] }
 embedded-alloc = "0.5.1"
 enum_dispatch = "0.3.12"
 embedded-graphics-framebuf = "0.5.0"
+usb-device = "0.3.1"
+usbd-serial = "0.2.0"
+ouroboros = { version = "0.18.2", default-features = false }
 
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"

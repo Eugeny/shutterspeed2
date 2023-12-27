@@ -177,7 +177,7 @@ impl DebugScreen {
         const HEIGHT: usize = 40;
 
         let mut buffer_data = [Rgb565::BLACK; WIDTH * HEIGHT];
-        let mut buffer = FrameBuf::new(&mut buffer_data, WIDTH as usize, HEIGHT as usize);
+        let mut buffer = FrameBuf::new(&mut buffer_data, WIDTH, HEIGHT);
 
         let max = match hw::ADC_RESOLUTION {
             Resolution::Six => 63,

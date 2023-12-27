@@ -23,20 +23,27 @@ mod app {
     use core::num::Wrapping;
     use core::panic;
 
+    use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
     use enum_dispatch::enum_dispatch;
     use hal::adc::config::{AdcConfig, Clock, Dma, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
+    use hal::gpio::alt::otg_fs::{Dm, Dp};
     use hal::gpio::{Edge, ErasedPin, Input, Speed};
+    use hal::otg_fs::{UsbBus, UsbBusType, USB};
     use hal::pac::{self, Interrupt, ADC1, DMA2, TIM2};
     use hal::prelude::*;
     use hal::spi::Spi;
     use hal::timer::{CounterHz, Event, Flag};
+    use ouroboros::self_referencing;
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
     use stm32f4xx_hal as hal;
+    use usb_device::class_prelude::UsbBusAllocator;
+    use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
+    use usbd_serial::SerialPort;
 
     use crate::display::{AppDrawTarget, Display};
     use crate::hardware_config::{self as hw, AllGpio, DisplayType};
@@ -60,6 +67,48 @@ mod app {
         Debug,
     }
 
+    #[self_referencing]
+    pub struct UsbDevices {
+        bus: UsbBusAllocator<UsbBus<USB>>,
+
+        #[borrows(bus)]
+        #[covariant]
+        pub serial: SerialPort<'this, UsbBus<USB>>,
+
+        #[borrows(bus)]
+        #[covariant]
+        pub device: UsbDevice<'this, UsbBus<USB>>,
+    }
+
+    impl UsbDevices {
+        pub fn make(bus: UsbBusAllocator<UsbBus<USB>>) -> Self {
+            let usb = UsbDevicesBuilder {
+                bus,
+                device_builder: |bus| {
+                    cortex_m::interrupt::free(|_cs| {
+                        UsbDeviceBuilder::new(&bus, UsbVidPid(0x16c0, 0x27dd))
+                            .strings(&[StringDescriptors::default()
+                                .product("Shutter Speed Tester")
+                                .manufacturer("inbox@null.page")])
+                            .unwrap()
+                            .device_class(usbd_serial::USB_CLASS_CDC)
+                            .build()
+                    })
+                },
+                serial_builder: |bus| cortex_m::interrupt::free(|_cs| SerialPort::new(bus)),
+            }
+            .build();
+
+            unsafe { NVIC::unmask(Interrupt::OTG_FS) };
+
+            usb
+        }
+
+        pub fn poll_serial(&mut self) -> bool {
+            self.with_mut(|s| s.device.poll(&mut [s.serial]))
+        }
+    }
+
     #[shared]
     struct Shared {
         transfer: DMATransfer,
@@ -69,6 +118,7 @@ mod app {
         calibration_state: CalibrationState,
         measurement: Measurement<CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
+        usb_devices: UsbDevices,
     }
 
     #[local]
@@ -78,6 +128,8 @@ mod app {
         mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
     }
+
+    static mut USB_EP_MEMORY: [u32; 1024] = [0; 1024];
 
     #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
     fn init(mut cx: init::Context) -> (Shared, Local) {
@@ -122,7 +174,7 @@ mod app {
         let clocks = rcc
             .cfgr
             .sysclk(hw::SYSCLK.Hz())
-            // .require_pll48clk()
+            .require_pll48clk()
             .hclk(hw::HCLK.MHz())
             .use_hse(25.MHz())
             .pclk1(80.MHz())
@@ -218,9 +270,22 @@ mod app {
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
         display_task::spawn().unwrap();
+        usb_task::spawn().unwrap();
         led_pin.set_low();
 
         let display = UnsafeCell::new(display);
+
+        let usb_bus = UsbBusType::new(
+            USB {
+                usb_global: dp.OTG_FS_GLOBAL,
+                usb_device: dp.OTG_FS_DEVICE,
+                usb_pwrclk: dp.OTG_FS_PWRCLK,
+                pin_dm: hw::usb_dm_pin!(gpio).into(),
+                pin_dp: hw::usb_dp_pin!(gpio).into(),
+                hclk: clocks.hclk(),
+            },
+            unsafe { &mut USB_EP_MEMORY },
+        );
 
         (
             Shared {
@@ -231,6 +296,7 @@ mod app {
                 calibration_state: CalibrationState::Done(0),
                 measurement: Measurement::new(0),
                 display,
+                usb_devices: UsbDevices::make(usb_bus),
             },
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
@@ -387,6 +453,36 @@ mod app {
         MeasurementScreen,
         DebugScreen,
         ResultsScreen,
+    }
+
+    fn handle_usb_activity(usb: &mut UsbDevices) {
+        usb.with_serial_mut(|serial| {
+            let mut buf = [0; 64];
+            match serial.read(&mut buf) {
+                Ok(count) if count > 0 => {
+                    serial.write(b"\r\n").unwrap();
+                    serial.write(&buf[..count]).unwrap();
+                }
+                _ => {}
+            }
+        })
+    }
+
+    #[task(binds=OTG_FS, shared=[usb_devices])]
+    fn usb_interrupt(cx: usb_interrupt::Context) {
+        let mut usb = cx.shared.usb_devices;
+        usb.lock(handle_usb_activity);
+    }
+
+    #[task(shared=[usb_devices], priority=1)]
+    async fn usb_task(cx: usb_task::Context) {
+        let mut usb = cx.shared.usb_devices;
+        loop {
+            if !usb.lock(|usb| usb.poll_serial()) {
+                Systick::delay(10.millis()).await;
+            }
+            usb.lock(handle_usb_activity);
+        }
     }
 
     #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]

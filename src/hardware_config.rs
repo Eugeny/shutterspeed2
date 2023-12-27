@@ -48,7 +48,7 @@ macro_rules! pin_macro {
 }
 
 pin_macro!($ display_dc_pin, a, pa8);
-pin_macro!($ display_rst_pin, a, pa11);
+pin_macro!($ display_rst_pin, a, pa10);
 pin_macro!($ display_sclk_pin, a, pa5);
 pin_macro!($ display_miso_pin, a, pa6);
 pin_macro!($ display_mosi_pin, a, pa7);
@@ -60,6 +60,9 @@ pin_macro!($ led_pin, c, pc13);
 
 pin_macro!($ mode_button_pin, a, pa1);
 pin_macro!($ measure_button_pin, a, pa2);
+
+pin_macro!($ usb_dm_pin, a, pa11);
+pin_macro!($ usb_dp_pin, a, pa12);
 
 // TIM2 <-> ADC1
 // TIM4 -> backlight PWM
