@@ -49,7 +49,7 @@ const KNOWN_SHUTTER_DURATIONS: [f32; 18] = [
 pub fn get_closest_shutter_speed(duration: f32) -> f32 {
     let mut best_match = 1.0;
     for d in KNOWN_SHUTTER_DURATIONS.iter() {
-        if (d.log2() - duration.log2()).abs() < (best_match.log2() - duration.log2()).abs() {
+        if (d - duration).abs() < (best_match - duration).abs() {
             best_match = *d;
         }
     }

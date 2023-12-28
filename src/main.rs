@@ -30,7 +30,6 @@ mod app {
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
-    use hal::gpio::alt::otg_fs::{Dm, Dp};
     use hal::gpio::{Edge, ErasedPin, Input, Speed};
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
     use hal::pac::{self, Interrupt, ADC1, DMA2, TIM2};

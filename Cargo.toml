@@ -36,7 +36,7 @@ micromath = { version = "2.1.0", features = ["num-traits"] }
 embedded-alloc = "0.5.1"
 enum_dispatch = "0.3.12"
 embedded-graphics-framebuf = "0.5.0"
-usb-device = "0.3.1"
+usb-device = "0.3.0"
 usbd-serial = "0.2.0"
 ouroboros = { version = "0.18.2", default-features = false }
 
@@ -63,4 +63,5 @@ bench = false
 codegen-units = 1 # better optimizations
 debug = true      # symbols are nice and they don't increase the size on Flash
 lto = true        # better optimizations
-opt-level = "z"
+# opt-level = "z"
+opt-level = 3

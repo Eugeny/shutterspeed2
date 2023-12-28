@@ -1,4 +1,4 @@
-use heapless::HistoryBuffer;
+use heapless::{HistoryBuffer, Vec};
 
 use crate::hardware_config as hw;
 use crate::util::{LaxDuration, LaxMonotonic};
@@ -56,10 +56,13 @@ impl Default for CalibrationState {
     }
 }
 
-pub type RingPreBuffer = HistoryBuffer<u16, 1000>;
-pub type RingBuffer = HistoryBuffer<u16, 1000>;
-
 const MARGIN_SAMPLES: usize = 200;
+pub const RING_BUFFER_LEN: usize = 1000;
+pub type RingBuffer = HistoryBuffer<u16, RING_BUFFER_LEN>;
+
+// const MARGIN_SAMPLES: usize = 10;
+// pub const RING_BUFFER_LEN: usize = 1000;
+
 
 #[derive(Copy, Clone)]
 pub struct SampleRate {
@@ -86,6 +89,75 @@ impl SampleRate {
     }
 }
 
+pub struct SamplingBuffer<const LEN: usize> {
+    buffer: Vec<u16, LEN>,
+    sample_rate: SampleRate,
+    samples_since_start: usize,
+}
+
+pub enum SamplingBufferWriteResult {
+    Discarded,
+    Sampled,
+    SampledAndCompacted { factor: usize },
+}
+
+impl<const LEN: usize> SamplingBuffer<LEN> {
+    pub fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+            sample_rate: SampleRate::new(1),
+            samples_since_start: 0,
+        }
+    }
+
+    pub fn samples_since_start(&self) -> usize {
+        self.samples_since_start
+    }
+
+    pub fn inner(&self) -> &Vec<u16, LEN> {
+        &self.buffer
+    }
+
+    pub fn sample_rate(&self) -> &SampleRate {
+        &self.sample_rate
+    }
+
+    pub fn extend_pre_buffer<I: Iterator<Item = u16>>(&mut self, iter: I) {
+        self.buffer.extend(iter)
+    }
+
+    #[inline(always)]
+    pub fn write(&mut self, value: u16) -> SamplingBufferWriteResult {
+        if !self.sample_rate.step() {
+            return SamplingBufferWriteResult::Discarded;
+        }
+
+        if self.buffer.push(value).is_ok() {
+            self.samples_since_start += 1;
+        }
+
+        if self.buffer.len() > self.buffer.capacity() - MARGIN_SAMPLES {
+            // Compactify samples in the buffer by discarding every 2nd item
+            let mut new_buffer = Vec::new();
+            let mut iter = self.buffer.iter();
+            while let Some(item) = iter.next() {
+                new_buffer.push(*item).unwrap();
+                // Skip every other one
+                if iter.next().is_none() {
+                    break;
+                }
+            }
+            self.buffer = new_buffer;
+            self.samples_since_start /= 2;
+            self.sample_rate.halve();
+
+            return SamplingBufferWriteResult::SampledAndCompacted { factor: 2 };
+        }
+
+        return SamplingBufferWriteResult::Sampled;
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MeasurementResult {
     pub duration_micros: u64,
@@ -97,25 +169,23 @@ pub struct MeasurementResult {
 
 pub enum Measurement<M: LaxMonotonic> {
     Idle {
-        pre_buffer: RingPreBuffer,
+        pre_buffer: RingBuffer,
         trigger_high: u16,
         trigger_low: u16,
     },
     Measuring {
         since: M::Instant,
-        sample_buffer: RingBuffer,
-        samples_since_start: usize,
         peak: u16,
         integrated: u64, // samples x (abs value)
-        sample_rate: SampleRate,
         trigger_low: u16,
+        sampling_buffer: SamplingBuffer<RING_BUFFER_LEN>,
     },
     Trailing {
         samples_since_start: usize,
         samples_since_end: usize,
         duration_micros: u64,
         integrated_duration_micros: u64,
-        sample_buffer: RingBuffer,
+        sample_buffer: Vec<u16, RING_BUFFER_LEN>,
         sample_rate: SampleRate,
     },
     Done(MeasurementResult),
@@ -130,7 +200,7 @@ impl<M: LaxMonotonic> Default for Measurement<M> {
 impl<M: LaxMonotonic> Measurement<M> {
     pub fn new(calibration_value: u16) -> Self {
         Self::Idle {
-            pre_buffer: RingPreBuffer::new(),
+            pre_buffer: RingBuffer::new(),
             trigger_low: (calibration_value as f32 * hw::TRIGGER_THRESHOLD_LOW) as u16,
             trigger_high: (calibration_value as f32 * hw::TRIGGER_THRESHOLD_HIGH) as u16,
         }
@@ -159,61 +229,80 @@ impl<M: LaxMonotonic> Measurement<M> {
             } => {
                 pre_buffer.write(value);
                 if value > *trigger_high {
-                    let mut sample_buffer = RingBuffer::new();
-                    sample_buffer.extend(
-                        pre_buffer
-                            .oldest_ordered()
-                            .skip(pre_buffer.len() - MARGIN_SAMPLES),
-                    );
+                    let now = M::now();
+
+                    // Now look back for the trigger_low
+                    #[rustfmt::skip]
+                    let ordered_buffer = pre_buffer.oldest_ordered().copied().collect::<Vec<_,RING_BUFFER_LEN>>();
+                    let _ = pre_buffer;
+
+                    let mut sampling_buffer = SamplingBuffer::new();
+
+                    sampling_buffer.extend_pre_buffer(ordered_buffer.iter().copied());
+
+                    // let last_index_above_trigger = ordered_buffer
+                    //     .iter()
+                    //     .enumerate()
+                    //     .rev()
+                    //     .find(|(_, &x)| x < *trigger_low)
+                    //     .map(|(i, _)| i)
+                    //     .unwrap_or(0);
+
+                    // let last_index_above_trigger = ordered_buffer.len() - 1;
+
+                    // let ordered_buffer = ordered_buffer
+                    //     .into_iter()
+                    //     .skip(last_index_above_trigger.saturating_sub(MARGIN_SAMPLES))
+                    //     .collect();
+
+                    // sampling_buffer.extend_pre_buffer(ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..last_index_above_trigger].into_iter().copied());
+
+                    let mut integrated = 0;
+                    // for sample in &ordered_buffer[last_index_above_trigger..] {
+                    //     integrated += *sample as u64;
+                    //     sampling_buffer.write(*sample);
+                    // }
+
+                    // todo add these samples to integrated
 
                     *self = Self::Measuring {
-                        since: M::now(),
-                        sample_buffer,
+                        since: now,
+                        sampling_buffer,
                         peak: value,
-                        samples_since_start: 0,
-                        integrated: 0,
-                        sample_rate: SampleRate::new(1),
+                        integrated,
                         trigger_low: *trigger_low,
                     };
                 }
             }
             Self::Measuring {
                 since,
-                sample_buffer,
-                samples_since_start,
+                sampling_buffer,
                 integrated,
                 peak,
-                sample_rate,
                 trigger_low,
             } => {
-                if !sample_rate.step() {
-                    return;
-                }
-
-                if *samples_since_start + MARGIN_SAMPLES > sample_buffer.capacity() - MARGIN_SAMPLES
-                {
-                    // Compactify samples in the buffer by discarding every 2nd item
-                    let mut new_buffer = RingBuffer::new();
-                    let mut iter = sample_buffer.iter();
-                    while let Some(item) = iter.next() {
-                        new_buffer.write(*item);
-                        // Skip every other one
-                        if iter.next().is_none() {
-                            break;
-                        }
+                *peak = (*peak).max(value);
+                match sampling_buffer.write(value) {
+                    SamplingBufferWriteResult::Discarded => (),
+                    SamplingBufferWriteResult::Sampled => {
+                        *integrated += value as u64;
                     }
-                    *sample_buffer = new_buffer;
-                    *samples_since_start /= 2;
-                    *integrated /= 2;
-                    sample_rate.halve();
+                    SamplingBufferWriteResult::SampledAndCompacted { factor } => {
+                        *integrated += value as u64;
+                        *integrated /= factor as u64;
+                    }
                 }
 
                 if value < *trigger_low {
                     let t_end = M::now();
 
+                    let samples_since_start = sampling_buffer.samples_since_start();
+                    let sample_rate = sampling_buffer.sample_rate().clone();
+                    let sample_buffer = sampling_buffer.inner().clone();
+
                     // remove area below threshold
                     let integrated_value_samples =
-                        *integrated - *samples_since_start as u64 * *trigger_low as u64;
+                        *integrated - samples_since_start as u64 * *trigger_low as u64;
 
                     // scale Y to 0-1
                     let integrated_duration_samples =
@@ -221,24 +310,18 @@ impl<M: LaxMonotonic> Measurement<M> {
 
                     let duration_micros = (t_end - *since).to_micros();
                     let integrated_duration_micros =
-                        integrated_duration_samples * duration_micros / *samples_since_start as u64;
+                        integrated_duration_samples * duration_micros / samples_since_start as u64;
 
                     *self = Self::Trailing {
                         duration_micros,
                         sample_buffer: sample_buffer.clone(),
-                        samples_since_start: *samples_since_start,
+                        samples_since_start: samples_since_start,
                         samples_since_end: 0,
                         integrated_duration_micros,
-                        sample_rate: *sample_rate,
+                        sample_rate,
                     };
                     return;
                 }
-
-                *samples_since_start += 1;
-                *integrated += value as u64;
-                *peak = (*peak).max(value);
-
-                sample_buffer.write(value);
             }
             Self::Trailing {
                 duration_micros,
@@ -255,7 +338,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                 let margin = MARGIN_SAMPLES / sample_rate.sample_rate as usize;
 
                 if *samples_since_end < margin {
-                    sample_buffer.write(value);
+                    let _ = sample_buffer.push(value);
                     *samples_since_end += 1;
                     *samples_since_start += 1;
                 } else {
@@ -263,20 +346,20 @@ impl<M: LaxMonotonic> Measurement<M> {
                     let final_margin = margin.min(*samples_since_start - *samples_since_end);
 
                     let buffer_len = sample_buffer.len();
-                    let iter = sample_buffer.oldest_ordered();
+                    let iter = sample_buffer.iter();
 
                     let end_index = buffer_len - *samples_since_end;
                     let iter = iter.take(end_index + final_margin);
 
                     let start_index = buffer_len.checked_sub(*samples_since_start);
-                    let iter = iter.skip(
+                    let mut iter = iter.skip(
                         start_index
                             .and_then(|x| x.checked_sub(final_margin))
                             .unwrap_or(0),
                     );
 
                     let mut final_buffer = RingBuffer::new();
-                    final_buffer.extend(iter);
+                    final_buffer.extend(&mut iter);
 
                     *samples_since_start -= margin - final_margin;
                     *samples_since_end -= margin - final_margin;
