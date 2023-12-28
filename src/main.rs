@@ -46,7 +46,7 @@ mod app {
 
     use crate::display::{AppDrawTarget, Display};
     use crate::hardware_config::{self as hw, AllGpio, DisplayType};
-    use crate::measurement::{CalibrationState, Measurement};
+    use crate::measurement::{CalibrationState, Measurement, RingBuffer};
     use crate::panic::set_panic_display_ref;
     use crate::ui::draw_boot_screen;
     use crate::ui::screens::{
@@ -108,6 +108,8 @@ mod app {
         }
     }
 
+    static mut MEASUREMENT_BUFFER: RingBuffer = RingBuffer::new();
+
     #[shared]
     struct Shared {
         transfer: DMATransfer,
@@ -115,7 +117,7 @@ mod app {
         sample_counter: Wrapping<u32>,
         app_mode: AppMode,
         calibration_state: CalibrationState,
-        measurement: Measurement<CycleCounterClock<{ hw::SYSCLK }>>,
+        measurement: Measurement<'static, CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
         usb_devices: UsbDevices,
     }
@@ -293,7 +295,7 @@ mod app {
                 sample_counter: Wrapping(0),
                 app_mode: AppMode::Start,
                 calibration_state: CalibrationState::Done(0),
-                measurement: Measurement::new(0),
+                measurement: Measurement::new(0, unsafe { &mut MEASUREMENT_BUFFER }),
                 display,
                 usb_devices: UsbDevices::make(usb_bus),
             },
@@ -399,7 +401,7 @@ mod app {
 
         let calibration_value = ctx.shared.calibration_state.lock(|state| state.finish());
         ctx.shared.measurement.lock(|measurement| {
-            *measurement = Measurement::new(calibration_value);
+            *measurement = Measurement::new(calibration_value, unsafe { &mut MEASUREMENT_BUFFER });
         });
 
         ctx.shared.app_mode.lock(|app_mode| {
@@ -525,7 +527,14 @@ mod app {
                         let result = cx
                             .shared
                             .measurement
-                            .lock(core::mem::take)
+                            .lock(|m| {
+                                core::mem::replace(
+                                    m,
+                                    Measurement::new(Default::default(), unsafe {
+                                        &mut MEASUREMENT_BUFFER
+                                    }),
+                                )
+                            })
                             .take_result()
                             .unwrap();
                         screen = ResultsScreen {

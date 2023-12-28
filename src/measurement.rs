@@ -56,13 +56,12 @@ impl Default for CalibrationState {
     }
 }
 
-const MARGIN_SAMPLES: usize = 200;
-pub const RING_BUFFER_LEN: usize = 1000;
+const MARGIN_SAMPLES: usize = 100;
+pub const RING_BUFFER_LEN: usize = 500;
 pub type RingBuffer = HistoryBuffer<u16, RING_BUFFER_LEN>;
 
 // const MARGIN_SAMPLES: usize = 10;
 // pub const RING_BUFFER_LEN: usize = 1000;
-
 
 #[derive(Copy, Clone)]
 pub struct SampleRate {
@@ -84,13 +83,13 @@ impl SampleRate {
         self.sample_rate_counter == 0
     }
 
-    fn halve(&mut self) {
-        self.sample_rate *= 2;
+    fn mul(&mut self, ratio: u32) {
+        self.sample_rate *= ratio;
     }
 }
 
-pub struct SamplingBuffer<const LEN: usize> {
-    buffer: Vec<u16, LEN>,
+pub struct SamplingBuffer<'a, const LEN: usize> {
+    buffer: &'a mut HistoryBuffer<u16, LEN>,
     sample_rate: SampleRate,
     samples_since_start: usize,
 }
@@ -98,24 +97,24 @@ pub struct SamplingBuffer<const LEN: usize> {
 pub enum SamplingBufferWriteResult {
     Discarded,
     Sampled,
-    SampledAndCompacted { factor: usize },
+    SampledAndCompacted { factor: u32 },
 }
 
-impl<const LEN: usize> SamplingBuffer<LEN> {
-    pub fn new() -> Self {
+impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
+    pub fn new(buffer: &'a mut HistoryBuffer<u16, LEN>) -> Self {
         Self {
-            buffer: Vec::new(),
+            buffer,
             sample_rate: SampleRate::new(1),
             samples_since_start: 0,
         }
     }
 
-    pub fn samples_since_start(&self) -> usize {
-        self.samples_since_start
+    pub fn into_inner(self) -> &'a mut HistoryBuffer<u16, LEN> {
+        self.buffer
     }
 
-    pub fn inner(&self) -> &Vec<u16, LEN> {
-        &self.buffer
+    pub fn samples_since_start(&self) -> usize {
+        self.samples_since_start
     }
 
     pub fn sample_rate(&self) -> &SampleRate {
@@ -132,26 +131,27 @@ impl<const LEN: usize> SamplingBuffer<LEN> {
             return SamplingBufferWriteResult::Discarded;
         }
 
-        if self.buffer.push(value).is_ok() {
-            self.samples_since_start += 1;
-        }
+        self.buffer.write(value);
+        self.samples_since_start += 1;
 
         if self.buffer.len() > self.buffer.capacity() - MARGIN_SAMPLES {
             // Compactify samples in the buffer by discarding every 2nd item
-            let mut new_buffer = Vec::new();
+            let mut new_buffer = HistoryBuffer::new();
             let mut iter = self.buffer.iter();
             while let Some(item) = iter.next() {
-                new_buffer.push(*item).unwrap();
+                new_buffer.write(*item);
                 // Skip every other one
                 if iter.next().is_none() {
                     break;
                 }
             }
-            self.buffer = new_buffer;
-            self.samples_since_start /= 2;
-            self.sample_rate.halve();
+            *self.buffer = new_buffer;
 
-            return SamplingBufferWriteResult::SampledAndCompacted { factor: 2 };
+            let factor = 2;
+            self.samples_since_start /= factor as usize;
+            self.sample_rate.mul(factor);
+
+            return SamplingBufferWriteResult::SampledAndCompacted { factor };
         }
 
         return SamplingBufferWriteResult::Sampled;
@@ -167,9 +167,9 @@ pub struct MeasurementResult {
     pub samples_since_end: usize,
 }
 
-pub enum Measurement<M: LaxMonotonic> {
+pub enum Measurement<'a, M: LaxMonotonic> {
     Idle {
-        pre_buffer: RingBuffer,
+        buffer: &'a mut RingBuffer,
         trigger_high: u16,
         trigger_low: u16,
     },
@@ -178,29 +178,25 @@ pub enum Measurement<M: LaxMonotonic> {
         peak: u16,
         integrated: u64, // samples x (abs value)
         trigger_low: u16,
-        sampling_buffer: SamplingBuffer<RING_BUFFER_LEN>,
+        sampling_buffer: SamplingBuffer<'a, RING_BUFFER_LEN>,
     },
     Trailing {
+        buffer: &'a mut RingBuffer,
         samples_since_start: usize,
         samples_since_end: usize,
         duration_micros: u64,
         integrated_duration_micros: u64,
-        sample_buffer: Vec<u16, RING_BUFFER_LEN>,
         sample_rate: SampleRate,
     },
     Done(MeasurementResult),
 }
 
-impl<M: LaxMonotonic> Default for Measurement<M> {
-    fn default() -> Self {
-        Self::new(0)
-    }
-}
+static mut TMP_BUFFER: RingBuffer = RingBuffer::new();
 
-impl<M: LaxMonotonic> Measurement<M> {
-    pub fn new(calibration_value: u16) -> Self {
+impl<'a, M: LaxMonotonic> Measurement<'a, M> {
+    pub fn new(calibration_value: u16, buffer: &'a mut RingBuffer) -> Self {
         Self::Idle {
-            pre_buffer: RingBuffer::new(),
+            buffer,
             trigger_low: (calibration_value as f32 * hw::TRIGGER_THRESHOLD_LOW) as u16,
             trigger_high: (calibration_value as f32 * hw::TRIGGER_THRESHOLD_HIGH) as u16,
         }
@@ -223,45 +219,58 @@ impl<M: LaxMonotonic> Measurement<M> {
     pub fn step(&mut self, value: u16) {
         match self {
             Self::Idle {
-                pre_buffer,
+                buffer,
                 trigger_high,
                 trigger_low,
             } => {
-                pre_buffer.write(value);
+                buffer.write(value);
                 if value > *trigger_high {
                     let now = M::now();
 
+                    let buffer = core::mem::replace(buffer, unsafe { &mut TMP_BUFFER });
                     // Now look back for the trigger_low
-                    #[rustfmt::skip]
-                    let ordered_buffer = pre_buffer.oldest_ordered().copied().collect::<Vec<_,RING_BUFFER_LEN>>();
-                    let _ = pre_buffer;
+                    let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
+                    ordered_buffer.extend(buffer.oldest_ordered().skip(buffer.len()).copied());
 
-                    let mut sampling_buffer = SamplingBuffer::new();
-
-                    sampling_buffer.extend_pre_buffer(ordered_buffer.iter().copied());
-
-                    // let last_index_above_trigger = ordered_buffer
-                    //     .iter()
-                    //     .enumerate()
-                    //     .rev()
-                    //     .find(|(_, &x)| x < *trigger_low)
-                    //     .map(|(i, _)| i)
-                    //     .unwrap_or(0);
-
-                    // let last_index_above_trigger = ordered_buffer.len() - 1;
+                    buffer.clear();
+                    let mut sampling_buffer = SamplingBuffer::new(buffer);
 
                     // let ordered_buffer = ordered_buffer
                     //     .into_iter()
                     //     .skip(last_index_above_trigger.saturating_sub(MARGIN_SAMPLES))
                     //     .collect();
 
+                    // sampling_buffer.extend_pre_buffer(ordered_buffer.iter().copied());
+
+                    let last_index_above_trigger = ordered_buffer
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, &x)| x < *trigger_low)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+
+                    // let last_index_above_trigger = ordered_buffer.len() - 1;
+
+                    // // A - include rise in integration
                     // sampling_buffer.extend_pre_buffer(ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..last_index_above_trigger].into_iter().copied());
 
-                    let mut integrated = 0;
+                    // let mut integrated = 0;
                     // for sample in &ordered_buffer[last_index_above_trigger..] {
                     //     integrated += *sample as u64;
                     //     sampling_buffer.write(*sample);
                     // }
+                    // // ---
+
+                    // B - dont include rise in integration
+                    sampling_buffer.extend_pre_buffer(
+                        ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..]
+                            .into_iter()
+                            .copied(),
+                    );
+
+                    let mut integrated = 0;
+                    // ---
 
                     // todo add these samples to integrated
 
@@ -298,7 +307,12 @@ impl<M: LaxMonotonic> Measurement<M> {
 
                     let samples_since_start = sampling_buffer.samples_since_start();
                     let sample_rate = sampling_buffer.sample_rate().clone();
-                    let sample_buffer = sampling_buffer.inner().clone();
+
+                    let sample_buffer = core::mem::replace(
+                        sampling_buffer,
+                        SamplingBuffer::new(unsafe { &mut TMP_BUFFER }),
+                    )
+                    .into_inner();
 
                     // remove area below threshold
                     let integrated_value_samples =
@@ -314,7 +328,7 @@ impl<M: LaxMonotonic> Measurement<M> {
 
                     *self = Self::Trailing {
                         duration_micros,
-                        sample_buffer: sample_buffer.clone(),
+                        buffer: sample_buffer,
                         samples_since_start: samples_since_start,
                         samples_since_end: 0,
                         integrated_duration_micros,
@@ -325,7 +339,7 @@ impl<M: LaxMonotonic> Measurement<M> {
             }
             Self::Trailing {
                 duration_micros,
-                sample_buffer,
+                buffer,
                 samples_since_start,
                 samples_since_end,
                 integrated_duration_micros,
@@ -338,15 +352,15 @@ impl<M: LaxMonotonic> Measurement<M> {
                 let margin = MARGIN_SAMPLES / sample_rate.sample_rate as usize;
 
                 if *samples_since_end < margin {
-                    let _ = sample_buffer.push(value);
+                    buffer.write(value);
                     *samples_since_end += 1;
                     *samples_since_start += 1;
                 } else {
                     // Reduce margins for short exposures
                     let final_margin = margin.min(*samples_since_start - *samples_since_end);
 
-                    let buffer_len = sample_buffer.len();
-                    let iter = sample_buffer.iter();
+                    let buffer_len = buffer.len();
+                    let iter = buffer.iter();
 
                     let end_index = buffer_len - *samples_since_end;
                     let iter = iter.take(end_index + final_margin);
