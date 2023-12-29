@@ -1,7 +1,7 @@
 use heapless::{HistoryBuffer, Vec};
 
 use crate::hardware_config as hw;
-use crate::util::{LaxDuration, LaxMonotonic};
+use crate::util::{LaxDuration, LaxMonotonic, HistoryBufferDoubleEndedIterator};
 
 #[derive(Clone, Debug)]
 pub struct Calibration {
@@ -98,11 +98,11 @@ pub enum SamplingBufferWriteResult {
 }
 
 impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
-    pub fn new(buffer: &'a mut HistoryBuffer<u16, LEN>) -> Self {
+    pub fn new(buffer: &'a mut HistoryBuffer<u16, LEN>, samples_since_start: usize) -> Self {
         Self {
             buffer,
             sample_rate: SampleRate::new(1),
-            samples_since_start: 0,
+            samples_since_start,
         }
     }
 
@@ -238,12 +238,14 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     // "Take" the buffer reference
                     let buffer = core::mem::replace(buffer, unsafe { &mut TMP_BUFFER });
 
-                    // Now look back for the trigger_low
-                    let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
-                    ordered_buffer.extend(buffer.oldest_ordered().copied());
+                    // TODO access slices directly to find out last_index_above_trigger
+                    // instead of copying the entire buffer
 
-                    let last_index_above_trigger = ordered_buffer
-                        .iter()
+                    // Now look back for the trigger_low
+                    // let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
+                    // ordered_buffer.extend(buffer.oldest_ordered().copied());
+
+                    let last_index_above_trigger = HistoryBufferDoubleEndedIterator::new(buffer)
                         .enumerate()
                         .rev()
                         .find(|(_, &x)| x < *trigger_low)
@@ -251,22 +253,22 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                         .unwrap_or(0);
 
                     // Prep buffer for reuse
-                    buffer.clear();
-                    let mut sampling_buffer = SamplingBuffer::new(buffer);
+                    // buffer.clear();
+                    let mut integrated = 0;
+                    let integrated_samples = buffer.len() - last_index_above_trigger;
+                    for sample in buffer.oldest_ordered().skip(last_index_above_trigger) {
+                        integrated += *sample as u64;
+                        // sampling_buffer.write(*sample);
+                    }
+
+                    let mut sampling_buffer = SamplingBuffer::new(buffer, integrated_samples);
 
                     // A - include rise in integration
-                    sampling_buffer.extend_pre_buffer(
-                        ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)
-                            ..last_index_above_trigger]
-                            .into_iter()
-                            .copied(),
-                    );
+                    // sampling_buffer.extend_pre_buffer(
+                    //     buffer.oldest_ordered().skip(last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)).take(MARGIN_SAMPLES)
+                    //         .copied(),
+                    // );
 
-                    let mut integrated = 0;
-                    for sample in &ordered_buffer[last_index_above_trigger..] {
-                        integrated += *sample as u64;
-                        sampling_buffer.write(*sample);
-                    }
 
                     *self = Self::Measuring {
                         since: now,
@@ -311,7 +313,7 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
 
                     let sample_buffer = core::mem::replace(
                         sampling_buffer,
-                        SamplingBuffer::new(unsafe { &mut TMP_BUFFER }),
+                        SamplingBuffer::new(unsafe { &mut TMP_BUFFER }, 0),
                     )
                     .into_inner();
 
