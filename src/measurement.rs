@@ -60,9 +60,6 @@ const MARGIN_SAMPLES: usize = 100;
 pub const RING_BUFFER_LEN: usize = 500;
 pub type RingBuffer = HistoryBuffer<u16, RING_BUFFER_LEN>;
 
-// const MARGIN_SAMPLES: usize = 10;
-// pub const RING_BUFFER_LEN: usize = 1000;
-
 #[derive(Copy, Clone)]
 pub struct SampleRate {
     sample_rate: u32,
@@ -234,61 +231,42 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                 trigger_low,
             } => {
                 buffer.write(value);
-                if buffer.len() > MARGIN_SAMPLES * 2 {
-                    // Keep the buffer small to avoid frequent resizing once
-                    // sampling starts
-                    compactify_history_buffer(buffer, 2);
-                }
 
                 if value > *trigger_high {
                     let now = M::now();
 
+                    // "Take" the buffer reference
                     let buffer = core::mem::replace(buffer, unsafe { &mut TMP_BUFFER });
+
                     // Now look back for the trigger_low
-                    // let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
-                    // ordered_buffer.extend(buffer.oldest_ordered().skip(buffer.len()).copied());
+                    let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
+                    ordered_buffer.extend(buffer.oldest_ordered().copied());
 
-                    // let ordered_buffer = ordered_buffer
-                    //     .into_iter()
-                    //     .skip(last_index_above_trigger.saturating_sub(MARGIN_SAMPLES))
-                    //     .collect();
+                    let last_index_above_trigger = ordered_buffer
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, &x)| x < *trigger_low)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
 
-                    // sampling_buffer.extend_pre_buffer(ordered_buffer.iter().copied());
-
-                    // let last_index_above_trigger = ordered_buffer
-                    //     .iter()
-                    //     .enumerate()
-                    //     .rev()
-                    //     .find(|(_, &x)| x < *trigger_low)
-                    //     .map(|(i, _)| i)
-                    //     .unwrap_or(0);
-
-                    // buffer.clear();
+                    // Prep buffer for reuse
+                    buffer.clear();
                     let mut sampling_buffer = SamplingBuffer::new(buffer);
 
-                    // let last_index_above_trigger = ordered_buffer.len() - 1;
-
-                    // // A - include rise in integration
-                    // sampling_buffer.extend_pre_buffer(ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..last_index_above_trigger].into_iter().copied());
-
-                    // let mut integrated = 0;
-                    // for sample in &ordered_buffer[last_index_above_trigger..] {
-                    //     integrated += *sample as u64;
-                    //     sampling_buffer.write(*sample);
-                    // }
-                    // // ---
-
-                    // // B - dont include rise in integration
-                    // sampling_buffer.extend_pre_buffer(
-                    //     ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..]
-                    //         .into_iter()
-                    //         .copied(),
-                    // );
+                    // A - include rise in integration
+                    sampling_buffer.extend_pre_buffer(
+                        ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)
+                            ..last_index_above_trigger]
+                            .into_iter()
+                            .copied(),
+                    );
 
                     let mut integrated = 0;
-                    // ---
-
-                    // todo add these samples to integrated
+                    for sample in &ordered_buffer[last_index_above_trigger..] {
+                        integrated += *sample as u64;
+                        sampling_buffer.write(*sample);
+                    }
 
                     *self = Self::Measuring {
                         since: now,
@@ -297,6 +275,13 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                         integrated,
                         trigger_low: *trigger_low,
                     };
+                    return;
+                }
+
+                if buffer.len() > MARGIN_SAMPLES * 2 {
+                    // Keep the buffer small to avoid frequent resizing once
+                    // sampling starts
+                    compactify_history_buffer(buffer, 2);
                 }
             }
             Self::Measuring {
