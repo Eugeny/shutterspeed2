@@ -136,26 +136,36 @@ impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
 
         if self.buffer.len() > self.buffer.capacity() - MARGIN_SAMPLES {
             // Compactify samples in the buffer by discarding every 2nd item
-            let mut new_buffer = HistoryBuffer::new();
-            let mut iter = self.buffer.iter();
-            while let Some(item) = iter.next() {
-                new_buffer.write(*item);
-                // Skip every other one
-                if iter.next().is_none() {
-                    break;
-                }
-            }
-            *self.buffer = new_buffer;
-
             let factor = 2;
-            self.samples_since_start /= factor as usize;
-            self.sample_rate.mul(factor);
+            compactify_history_buffer(&mut self.buffer, factor);
+            self.samples_since_start /= factor;
+            self.sample_rate.mul(factor as u32);
 
-            return SamplingBufferWriteResult::SampledAndCompacted { factor };
+            return SamplingBufferWriteResult::SampledAndCompacted {
+                factor: factor as u32,
+            };
         }
 
         return SamplingBufferWriteResult::Sampled;
     }
+}
+
+fn compactify_history_buffer<T: Copy, const LEN: usize>(
+    buffer: &mut HistoryBuffer<T, LEN>,
+    factor: usize,
+) {
+    let mut new_buffer = HistoryBuffer::<T, LEN>::new();
+    let mut iter = buffer.oldest_ordered();
+    while let Some(item) = iter.next() {
+        new_buffer.write(*item);
+        // Skip every other one
+        for _ in 0..factor - 1 {
+            if iter.next().is_none() {
+                break;
+            }
+        }
+    }
+    *buffer = new_buffer
 }
 
 #[derive(Clone, Debug)]
@@ -224,16 +234,19 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                 trigger_low,
             } => {
                 buffer.write(value);
+                if buffer.len() > MARGIN_SAMPLES * 2 {
+                    // Keep the buffer small to avoid frequent resizing once
+                    // sampling starts
+                    compactify_history_buffer(buffer, 2);
+                }
+
                 if value > *trigger_high {
                     let now = M::now();
 
                     let buffer = core::mem::replace(buffer, unsafe { &mut TMP_BUFFER });
                     // Now look back for the trigger_low
-                    let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
-                    ordered_buffer.extend(buffer.oldest_ordered().skip(buffer.len()).copied());
-
-                    buffer.clear();
-                    let mut sampling_buffer = SamplingBuffer::new(buffer);
+                    // let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
+                    // ordered_buffer.extend(buffer.oldest_ordered().skip(buffer.len()).copied());
 
                     // let ordered_buffer = ordered_buffer
                     //     .into_iter()
@@ -242,13 +255,16 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
 
                     // sampling_buffer.extend_pre_buffer(ordered_buffer.iter().copied());
 
-                    let last_index_above_trigger = ordered_buffer
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .find(|(_, &x)| x < *trigger_low)
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
+                    // let last_index_above_trigger = ordered_buffer
+                    //     .iter()
+                    //     .enumerate()
+                    //     .rev()
+                    //     .find(|(_, &x)| x < *trigger_low)
+                    //     .map(|(i, _)| i)
+                    //     .unwrap_or(0);
+
+                    // buffer.clear();
+                    let mut sampling_buffer = SamplingBuffer::new(buffer);
 
                     // let last_index_above_trigger = ordered_buffer.len() - 1;
 
@@ -262,12 +278,12 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     // }
                     // // ---
 
-                    // B - dont include rise in integration
-                    sampling_buffer.extend_pre_buffer(
-                        ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..]
-                            .into_iter()
-                            .copied(),
-                    );
+                    // // B - dont include rise in integration
+                    // sampling_buffer.extend_pre_buffer(
+                    //     ordered_buffer[last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)..]
+                    //         .into_iter()
+                    //         .copied(),
+                    // );
 
                     let mut integrated = 0;
                     // ---
