@@ -346,16 +346,16 @@ mod app {
     #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 4)]
     fn mode_button_press(mut cx: mode_button_press::Context) {
         cx.shared.app_mode.lock(|app_mode| match app_mode {
-            _ => {
-                *app_mode = AppMode::Update;
+            // _ => {
+            //     *app_mode = AppMode::Update;
+            // }
+            AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
+                debug_task::spawn().unwrap();
             }
-            // AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
-            //     debug_task::spawn().unwrap();
-            // }
-            // AppMode::Debug => {
-            //     *app_mode = AppMode::Start;
-            //     debug_task::spawn().unwrap();
-            // }
+            AppMode::Debug => {
+                *app_mode = AppMode::Start;
+                debug_task::spawn().unwrap();
+            }
             _ => (),
         });
         cx.local.mode_button_pin.clear_interrupt_pending_bit();
