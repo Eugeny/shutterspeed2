@@ -1,0 +1,22 @@
+[package]
+authors = ["Eugene <inbox@null.page>"]
+edition = "2018"
+readme = "README.md"
+name = "bootloader"
+version = "0.1.0"
+
+[[bin]]
+name = "bootloader"
+test = false
+bench = false
+
+[dependencies]
+bootloader-api = { path = "../bootloader-api" }
+
+cortex-m-rt.workspace = true
+cortex-m.workspace = true
+cortex-m-semihosting.workspace = true
+embedded-hal.workspace = true
+stm32f4xx-hal.workspace = true
+
+panic-halt = "*"

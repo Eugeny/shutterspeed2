@@ -43,6 +43,7 @@ macro_rules! pin_macro {
             };
         }
 
+        #[allow(unused_imports)]
         pub use $name;
     };
 }

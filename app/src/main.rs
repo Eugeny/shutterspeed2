@@ -23,6 +23,7 @@ mod app {
     use core::num::Wrapping;
     use core::panic;
 
+    #[cfg(usb)]
     use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
     use enum_dispatch::enum_dispatch;
@@ -30,18 +31,23 @@ mod app {
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
-    use hal::gpio::{Edge, ErasedPin, Input, Speed};
+    use hal::gpio::{Edge, ErasedPin, Input, Output, Speed};
+    #[cfg(usb)]
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
     use hal::pac::{self, Interrupt, ADC1, DMA2, TIM2};
     use hal::prelude::*;
     use hal::spi::Spi;
     use hal::timer::{CounterHz, Event, Flag};
+    #[cfg(usb)]
     use ouroboros::self_referencing;
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
     use stm32f4xx_hal as hal;
+    #[cfg(usb)]
     use usb_device::class_prelude::UsbBusAllocator;
+    #[cfg(usb)]
     use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
+    #[cfg(usb)]
     use usbd_serial::SerialPort;
 
     use crate::display::{AppDrawTarget, Display};
@@ -51,6 +57,7 @@ mod app {
     use crate::ui::draw_boot_screen;
     use crate::ui::screens::{
         CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen, StartScreen,
+        UpdateScreen,
     };
     use crate::util::CycleCounterClock;
 
@@ -64,9 +71,11 @@ mod app {
         Measure,
         Results,
         Debug,
+        Update,
     }
 
     #[self_referencing]
+    #[cfg(usb)]
     pub struct UsbDevices {
         bus: UsbBusAllocator<UsbBus<USB>>,
 
@@ -79,6 +88,7 @@ mod app {
         pub device: UsbDevice<'this, UsbBus<USB>>,
     }
 
+    #[cfg(usb)]
     impl UsbDevices {
         pub fn make(bus: UsbBusAllocator<UsbBus<USB>>) -> Self {
             let usb = UsbDevicesBuilder {
@@ -110,6 +120,12 @@ mod app {
 
     static mut MEASUREMENT_BUFFER: RingBuffer = RingBuffer::new();
 
+    #[cfg(usb)]
+    type UsbDevicesImpl = UsbDevices;
+
+    #[cfg(not(usb))]
+    type UsbDevicesImpl = ();
+
     #[shared]
     struct Shared {
         transfer: DMATransfer,
@@ -119,7 +135,7 @@ mod app {
         calibration_state: CalibrationState,
         measurement: Measurement<'static, CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
-        usb_devices: UsbDevices,
+        usb_devices: UsbDevicesImpl,
     }
 
     #[local]
@@ -128,8 +144,10 @@ mod app {
         timer: CounterHz<TIM2>,
         mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
+        led_pin: ErasedPin<Output>,
     }
 
+    #[cfg(usb)]
     static mut USB_EP_MEMORY: [u32; 1024] = [0; 1024];
 
     #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
@@ -149,6 +167,8 @@ mod app {
             c: dp.GPIOC.split(),
         };
 
+        let mut led_pin = hw::led_pin!(gpio).into_push_pull_output();
+
         let mut backlight_pin = hw::display_backlight_pin!(gpio).into_push_pull_output();
         backlight_pin.set_low();
 
@@ -160,15 +180,16 @@ mod app {
         // }
 
         // Workaround 2 AN4073 4.1 reduce ADC crosstalk
-        {
-            dp.PWR.cr.write(|w| w.adcdc1().set_bit());
-        }
+        // {
+        //     dp.PWR.cr.write(|w| w.adcdc1().set_bit());
+        // }
 
         // // Workaround 3 AN4073 4.1 reduce ADC crosstalk
         // {
         //     dp.SYSCFG.pmc.write(|x| x.adc1dc2().set_bit())
         // }
 
+        cortex_m::asm::delay(10000);
         let mut syscfg = dp.SYSCFG.constrain();
 
         let rcc = dp.RCC.constrain();
@@ -186,8 +207,6 @@ mod app {
 
         let systick_token = create_systick_token!();
         Systick::start(cx.core.SYST, hw::SYSCLK, systick_token);
-
-        let mut led_pin = hw::led_pin!(gpio).into_push_pull_output();
 
         let adc_pin = hw::adc_pin!(gpio).into_analog();
         // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
@@ -271,11 +290,13 @@ mod app {
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
         display_task::spawn().unwrap();
+        #[cfg(usb)]
         usb_task::spawn().unwrap();
         led_pin.set_low();
 
         let display = UnsafeCell::new(display);
 
+        #[cfg(usb)]
         let usb_bus = UsbBusType::new(
             USB {
                 usb_global: dp.OTG_FS_GLOBAL,
@@ -297,13 +318,17 @@ mod app {
                 calibration_state: CalibrationState::Done(0),
                 measurement: Measurement::new(0, unsafe { &mut MEASUREMENT_BUFFER }),
                 display,
+                #[cfg(usb)]
                 usb_devices: UsbDevices::make(usb_bus),
+                #[cfg(not(usb))]
+                usb_devices: (),
             },
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
                 timer,
                 mode_button_pin: mode_button_pin.erase(),
                 measure_button_pin: measure_button_pin.erase(),
+                led_pin: led_pin.erase(),
             },
         )
     }
@@ -321,20 +346,24 @@ mod app {
     #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 4)]
     fn mode_button_press(mut cx: mode_button_press::Context) {
         cx.shared.app_mode.lock(|app_mode| match app_mode {
-            AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
-                debug_task::spawn().unwrap();
+            _ => {
+                *app_mode = AppMode::Update;
             }
-            AppMode::Debug => {
-                *app_mode = AppMode::Start;
-                debug_task::spawn().unwrap();
-            }
+            // AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
+            //     debug_task::spawn().unwrap();
+            // }
+            // AppMode::Debug => {
+            //     *app_mode = AppMode::Start;
+            //     debug_task::spawn().unwrap();
+            // }
             _ => (),
         });
         cx.local.mode_button_pin.clear_interrupt_pending_bit();
     }
 
-    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin], priority = 4)]
+    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin, led_pin], priority = 4)]
     fn measure_button_press(mut cx: measure_button_press::Context) {
+        cx.local.led_pin.toggle();
         cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Start;
         });
@@ -446,18 +475,9 @@ mod app {
         });
     }
 
-    #[enum_dispatch(Screen)]
-    #[allow(clippy::large_enum_variant, clippy::enum_variant_names)]
-    enum Screens {
-        StartScreen,
-        CalibrationScreen,
-        MeasurementScreen,
-        DebugScreen,
-        ResultsScreen,
-    }
-
-    fn handle_usb_activity(usb: &mut UsbDevices) {
-        usb.with_serial_mut(|serial| {
+    fn handle_usb_activity(_usb: &mut UsbDevicesImpl) {
+        #[cfg(usb)]
+        _usb.with_serial_mut(|serial| {
             let mut buf = [0; 64];
             match serial.read(&mut buf) {
                 Ok(count) if count > 0 => {
@@ -476,14 +496,28 @@ mod app {
     }
 
     #[task(shared=[usb_devices], priority=1)]
-    async fn usb_task(cx: usb_task::Context) {
-        let mut usb = cx.shared.usb_devices;
-        loop {
-            if !usb.lock(|usb| usb.poll_serial()) {
-                Systick::delay(10.millis()).await;
+    async fn usb_task(_cx: usb_task::Context) {
+        #[cfg(usb)]
+        {
+            let mut usb = _cx.shared.usb_devices;
+            loop {
+                if !usb.lock(|usb| usb.poll_serial()) {
+                    Systick::delay(10.millis()).await;
+                }
+                usb.lock(handle_usb_activity);
             }
-            usb.lock(handle_usb_activity);
         }
+    }
+
+    #[enum_dispatch(Screen)]
+    #[allow(clippy::large_enum_variant, clippy::enum_variant_names)]
+    enum Screens {
+        StartScreen,
+        CalibrationScreen,
+        MeasurementScreen,
+        DebugScreen,
+        ResultsScreen,
+        UpdateScreen,
     }
 
     #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
@@ -542,6 +576,9 @@ mod app {
                             result,
                         }
                         .into();
+                    }
+                    AppMode::Update => {
+                        screen = UpdateScreen {}.into();
                     }
                     AppMode::None => (),
                 };

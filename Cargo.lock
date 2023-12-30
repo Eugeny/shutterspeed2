@@ -9,6 +9,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "bootloader-api",
+ "cortex-m",
+ "cortex-m-microclock",
+ "cortex-m-rt",
+ "cortex-m-semihosting",
+ "display-interface-spi",
+ "embedded-alloc",
+ "embedded-graphics",
+ "embedded-graphics-framebuf",
+ "embedded-hal 0.2.7",
+ "embedded-text",
+ "embedded-time",
+ "enum_dispatch",
+ "fugit",
+ "heapless 0.8.0",
+ "micromath",
+ "mipidsi",
+ "ouroboros",
+ "rtic",
+ "rtic-monotonics",
+ "stm32f4xx-hal",
+ "u8g2-fonts",
+ "ufmt",
+ "usb-device",
+ "usbd-serial",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -49,6 +80,30 @@ name = "bitfield"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46afbd2983a5d5a7bd740ccb198caf5b82f45c40c09c0eed36052d91cb92e719"
+
+[[package]]
+name = "bootloader"
+version = "0.1.0"
+dependencies = [
+ "bootloader-api",
+ "cortex-m",
+ "cortex-m-rt",
+ "cortex-m-semihosting",
+ "embedded-hal 0.2.7",
+ "panic-halt",
+ "stm32f4xx-hal",
+]
+
+[[package]]
+name = "bootloader-api"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "cortex-m-semihosting",
+ "embedded-hal 0.2.7",
+ "stm32f4xx-hal",
+]
 
 [[package]]
 name = "byte-slice-cast"
@@ -271,7 +326,7 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
- "syn 2.0.42",
+ "syn 2.0.43",
 ]
 
 [[package]]
@@ -291,7 +346,7 @@ checksum = "f95e2801cd355d4a1a3e3953ce6ee5ae9603a5c833455343a8bfe3f44d418246"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.42",
+ "syn 2.0.43",
 ]
 
 [[package]]
@@ -330,21 +385,21 @@ dependencies = [
 
 [[package]]
 name = "futures-core"
-version = "0.3.29"
+version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb1d22c66e66d9d72e1758f0bd7d4fd0bee04cad842ee34587d68c07e45d088c"
+checksum = "dfc6580bb841c5a68e9ef15c77ccc837b40a7504914d52e47b8b0e9bbda25a1d"
 
 [[package]]
 name = "futures-task"
-version = "0.3.29"
+version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efd193069b0ddadc69c46389b740bbccdd97203899b48d09c5f7969591d6bae2"
+checksum = "38d84fa142264698cdce1a9f9172cf383a0c82de1bddcf3092901442c4097004"
 
 [[package]]
 name = "futures-util"
-version = "0.3.29"
+version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a19526d624e703a3179b3d322efec918b6246ea0fa51d41124525f00f1cc8104"
+checksum = "3d6401deb83407ab3da39eba7e33987a73c3df0c82b4bb5813ee871c19c41d48"
 dependencies = [
  "futures-core",
  "futures-task",
@@ -564,7 +619,7 @@ checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.42",
+ "syn 2.0.43",
 ]
 
 [[package]]
@@ -601,8 +656,14 @@ dependencies = [
  "proc-macro2",
  "proc-macro2-diagnostics",
  "quote",
- "syn 2.0.42",
+ "syn 2.0.43",
 ]
+
+[[package]]
+name = "panic-halt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de96540e0ebde571dc55c73d60ef407c653844e6f9a1e2fdbd40c07b9252d812"
 
 [[package]]
 name = "pin-project-lite"
@@ -669,7 +730,7 @@ checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.42",
+ "syn 2.0.43",
  "version_check",
  "yansi",
 ]
@@ -806,36 +867,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
-name = "shutterspeed"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-microclock",
- "cortex-m-rt",
- "cortex-m-semihosting",
- "display-interface-spi",
- "embedded-alloc",
- "embedded-graphics",
- "embedded-graphics-framebuf",
- "embedded-hal 0.2.7",
- "embedded-text",
- "embedded-time",
- "enum_dispatch",
- "fugit",
- "heapless 0.8.0",
- "micromath",
- "mipidsi",
- "ouroboros",
- "rtic",
- "rtic-monotonics",
- "stm32f4xx-hal",
- "u8g2-fonts",
- "ufmt",
- "usb-device",
- "usbd-serial",
-]
-
-[[package]]
 name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -916,9 +947,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.42"
+version = "2.0.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b7d0a2c048d661a1a59fcd7355baa232f7ed34e0ee4df2eef3c1c1c0d3852d8"
+checksum = "ee659fb5f3d355364e1f3e5bc10fb82068efbf824a1e9d1c9504244a6469ad53"
 dependencies = [
  "proc-macro2",
  "quote",

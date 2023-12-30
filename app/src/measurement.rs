@@ -1,7 +1,7 @@
-use heapless::{HistoryBuffer, Vec};
+use heapless::HistoryBuffer;
 
 use crate::hardware_config as hw;
-use crate::util::{LaxDuration, LaxMonotonic, HistoryBufferDoubleEndedIterator};
+use crate::util::{HistoryBufferDoubleEndedIterator, LaxDuration, LaxMonotonic};
 
 #[derive(Clone, Debug)]
 pub struct Calibration {
@@ -238,13 +238,7 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     // "Take" the buffer reference
                     let buffer = core::mem::replace(buffer, unsafe { &mut TMP_BUFFER });
 
-                    // TODO access slices directly to find out last_index_above_trigger
-                    // instead of copying the entire buffer
-
                     // Now look back for the trigger_low
-                    // let mut ordered_buffer = Vec::<_, RING_BUFFER_LEN>::new();
-                    // ordered_buffer.extend(buffer.oldest_ordered().copied());
-
                     let last_index_above_trigger = HistoryBufferDoubleEndedIterator::new(buffer)
                         .enumerate()
                         .rev()
@@ -252,23 +246,15 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                         .map(|(i, _)| i)
                         .unwrap_or(0);
 
-                    // Prep buffer for reuse
-                    // buffer.clear();
-                    let mut integrated = 0;
+                    // Immediately integrated any samples since then
                     let integrated_samples = buffer.len() - last_index_above_trigger;
-                    for sample in buffer.oldest_ordered().skip(last_index_above_trigger) {
-                        integrated += *sample as u64;
-                        // sampling_buffer.write(*sample);
-                    }
+                    let integrated = buffer
+                        .oldest_ordered()
+                        .skip(last_index_above_trigger)
+                        .map(|&x| x as u64)
+                        .sum();
 
-                    let mut sampling_buffer = SamplingBuffer::new(buffer, integrated_samples);
-
-                    // A - include rise in integration
-                    // sampling_buffer.extend_pre_buffer(
-                    //     buffer.oldest_ordered().skip(last_index_above_trigger.saturating_sub(MARGIN_SAMPLES)).take(MARGIN_SAMPLES)
-                    //         .copied(),
-                    // );
-
+                    let sampling_buffer = SamplingBuffer::new(buffer, integrated_samples);
 
                     *self = Self::Measuring {
                         since: now,
