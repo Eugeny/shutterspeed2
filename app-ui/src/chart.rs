@@ -5,6 +5,7 @@ use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Drawable;
 use heapless::HistoryBuffer;
+#[cfg(feature = "cortex-m")]
 use micromath::F32Ext;
 
 use crate::primitives::{Cross, Pointer};

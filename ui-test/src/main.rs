@@ -18,10 +18,10 @@ async fn main() {
     // Create a simulated display with the dimensions of the text box.
     let mut display = SimulatorDisplay::new(Size::new(240, 320));
 
-    let mut screen = Screens::Boot(BootScreen::new());
+    let mut screen = Screens::Boot(BootScreen::default());
     screen.draw_init(&mut display).await;
 
-    let output_settings = OutputSettingsBuilder::new().build();
+    let output_settings = OutputSettingsBuilder::new().scale(2).build();
     let mut w = Window::new("UI", &output_settings);
 
     'outer: loop {
@@ -33,15 +33,11 @@ async fn main() {
                 SimulatorEvent::Quit => {
                     break 'outer;
                 }
-                SimulatorEvent::KeyUp {
-                    keycode,
-                    keymod,
-                    repeat,
-                } => {
+                SimulatorEvent::KeyUp { keycode, .. } => {
                     match keycode {
-                        Keycode::Q => screen = StartScreen::new().into(),
-                        Keycode::W => screen = CalibrationScreen::new().into(),
-                        Keycode::E => screen = MeasurementScreen::new().into(),
+                        Keycode::Q => screen = StartScreen::default().into(),
+                        Keycode::W => screen = CalibrationScreen::default().into(),
+                        Keycode::E => screen = MeasurementScreen::default().into(),
                         Keycode::R => {
                             screen = ResultsScreen::new(
                                 CalibrationState::Done(128),
@@ -55,7 +51,7 @@ async fn main() {
                             )
                             .into()
                         }
-                        Keycode::Y => screen = UpdateScreen::new().into(),
+                        Keycode::Y => screen = UpdateScreen::default().into(),
                         _ => (),
                     }
                     screen.draw_init(&mut display).await;

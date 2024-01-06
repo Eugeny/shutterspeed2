@@ -2,6 +2,7 @@ use core::fmt::Debug;
 
 use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::Rgb565;
+#[cfg(feature = "cortex-m")]
 use fugit::ExtU32;
 #[cfg(feature = "cortex-m")]
 use rtic_monotonics::systick::Systick;

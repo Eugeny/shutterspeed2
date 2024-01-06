@@ -6,6 +6,7 @@ use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Drawable;
 use heapless::String;
+#[cfg(feature = "cortex-m")]
 use micromath::F32Ext;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use ufmt::uwrite;

@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 authors = ["Eugene <inbox@null.page>"]
 edition = "2018"
@@ -15,9 +17,9 @@ bench = false
 app-ui = { path = "../app-ui" }
 app-measurements = { path = "../app-measurements" }
 
-heapless.workspace = true
-embedded-graphics.workspace = true
-embedded-graphics-simulator = "0.6.0"
+heapless = "0.8"
+embedded-graphics = "0.8"
+embedded-graphics-simulator = "0.6"
 tokio = { version = "1.35.1", features = ["rt", "macros"] }
 
 [features]
