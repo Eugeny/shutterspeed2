@@ -3,7 +3,6 @@ use core::fmt::Debug;
 use app_measurements::util::get_closest_shutter_speed;
 use app_measurements::{CalibrationState, MeasurementResult};
 use embedded_graphics::geometry::Point;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::Drawable;
 use heapless::String;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
@@ -15,7 +14,7 @@ use crate::fonts::{LARGE_DIGIT_FONT, SMALLER_FONT, SMALL_FONT, TINY_FONT};
 use crate::format::write_fraction;
 use crate::primitives::Pointer;
 use crate::ruler::draw_speed_ruler;
-use crate::AppDrawTarget;
+use crate::{config as cfg, AppDrawTarget};
 
 pub struct ResultsScreen<DT, E> {
     pub calibration: CalibrationState,
@@ -25,7 +24,7 @@ pub struct ResultsScreen<DT, E> {
 
 impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
     async fn draw_init(&mut self, display: &mut DT) {
-        display.clear(Rgb565::BLACK).unwrap();
+        display.clear(cfg::COLOR_BACKGROUND).unwrap();
 
         draw_speed_ruler(
             display,
@@ -76,8 +75,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                     origin + Point::new(5, 30),
                     VerticalPosition::Top,
                     FontColor::WithBackground {
-                        fg: Rgb565::CSS_LIGHT_GRAY,
-                        bg: Rgb565::BLACK,
+                        fg: cfg::COLOR_RESULT_VALUE_FADED,
+                        bg: cfg::COLOR_BACKGROUND,
                     },
                     display,
                 )
@@ -88,8 +87,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                     origin + Point::new(35, 15),
                     VerticalPosition::Top,
                     FontColor::WithBackground {
-                        fg: Rgb565::WHITE,
-                        bg: Rgb565::BLACK,
+                        fg: cfg::COLOR_RESULT_VALUE,
+                        bg: cfg::COLOR_BACKGROUND,
                     },
                     display,
                 )
@@ -102,8 +101,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                     origin + Point::new(5, 15),
                     VerticalPosition::Top,
                     FontColor::WithBackground {
-                        fg: Rgb565::WHITE,
-                        bg: Rgb565::BLACK,
+                        fg: cfg::COLOR_RESULT_VALUE,
+                        bg: cfg::COLOR_BACKGROUND,
                     },
                     display,
                 )
@@ -115,8 +114,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 dim.bounding_box.unwrap().bottom_right().unwrap() + Point::new(5, -25),
                 VerticalPosition::Top,
                 FontColor::WithBackground {
-                    fg: Rgb565::CSS_LIGHT_GRAY,
-                    bg: Rgb565::BLACK,
+                    fg: cfg::COLOR_RESULT_VALUE_FADED,
+                    bg: cfg::COLOR_BACKGROUND,
                 },
                 display,
             )
@@ -128,8 +127,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 origin,
                 VerticalPosition::Top,
                 FontColor::WithBackground {
-                    bg: Rgb565::WHITE,
-                    fg: Rgb565::BLACK,
+                    bg: cfg::COLOR_RESULT_VALUE,
+                    fg: cfg::COLOR_BACKGROUND,
                 },
                 display,
             )
@@ -143,8 +142,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 origin,
                 VerticalPosition::Top,
                 FontColor::WithBackground {
-                    bg: Rgb565::CSS_ORANGE_RED,
-                    fg: Rgb565::BLACK,
+                    bg: cfg::COLOR_RESULT_EXP_TIME,
+                    fg: cfg::COLOR_BACKGROUND,
                 },
                 display,
             )
@@ -169,8 +168,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                     origin + Point::new(5, 25),
                     VerticalPosition::Top,
                     FontColor::WithBackground {
-                        fg: Rgb565::WHITE,
-                        bg: Rgb565::BLACK,
+                        fg: cfg::COLOR_RESULT_VALUE,
+                        bg: cfg::COLOR_BACKGROUND,
                     },
                     display,
                 )
@@ -182,8 +181,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                     dim.bounding_box.unwrap().bottom_right().unwrap() + Point::new(5, -16),
                     VerticalPosition::Top,
                     FontColor::WithBackground {
-                        fg: Rgb565::CSS_LIGHT_GRAY,
-                        bg: Rgb565::BLACK,
+                        fg: cfg::COLOR_RESULT_VALUE_FADED,
+                        bg: cfg::COLOR_BACKGROUND,
                     },
                     display,
                 )
@@ -201,11 +200,11 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
             * 100.0) as i16;
 
         let color = if percent_offset.abs() < 15 {
-            Rgb565::CSS_PALE_GREEN
+            cfg::COLOR_RESULT_GOOD
         } else if percent_offset.abs() < 30 {
-            Rgb565::CSS_ORANGE_RED
+            cfg::COLOR_RESULT_FAIR
         } else {
-            Rgb565::CSS_RED
+            cfg::COLOR_RESULT_BAD
         };
 
         TINY_FONT
@@ -215,7 +214,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 VerticalPosition::Top,
                 FontColor::WithBackground {
                     bg: color,
-                    fg: Rgb565::BLACK,
+                    fg: cfg::COLOR_BACKGROUND,
                 },
                 display,
             )
@@ -231,7 +230,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 VerticalPosition::Top,
                 FontColor::WithBackground {
                     fg: color,
-                    bg: Rgb565::BLACK,
+                    bg: cfg::COLOR_BACKGROUND,
                 },
                 display,
             )
@@ -243,7 +242,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 VerticalPosition::Top,
                 FontColor::WithBackground {
                     fg: color,
-                    bg: Rgb565::BLACK,
+                    bg: cfg::COLOR_BACKGROUND,
                 },
                 display,
             )
@@ -253,7 +252,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
             origin + Point::new(6, if percent_offset > 0 { 30 } else { 40 }),
             5,
             percent_offset > 0,
-            Rgb565::WHITE,
+            cfg::COLOR_RESULT_VALUE,
         )
         .draw(display)
         .unwrap();
