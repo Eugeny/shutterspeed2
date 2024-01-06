@@ -1,3 +1,5 @@
+use core::fmt::Debug;
+
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
@@ -5,30 +7,32 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Drawable;
 use embedded_graphics_framebuf::FrameBuf;
 use heapless::{HistoryBuffer, String};
-use stm32f4xx_hal::adc::config::Resolution;
+// use stm32f4xx_hal::adc::config::Resolution;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use ufmt::uwrite;
 
 use super::Screen;
-use crate::display::AppDrawTarget;
-use crate::hardware_config as hw;
-use crate::ui::fonts::{LARGE_DIGIT_FONT, SMALL_FONT, TINY_FONT};
-use crate::ui::primitives::Pointer;
+// use crate::hardware_config as cfg;
+use crate::fonts::{LARGE_DIGIT_FONT, SMALL_FONT, TINY_FONT};
+use crate::primitives::Pointer;
+use crate::{config as cfg, AppDrawTarget};
 
-pub struct DebugScreen {
+pub struct DebugScreen<DT, E> {
     adc_history: HistoryBuffer<u16, 1000>,
     is_triggered: bool,
     calibration: u16,
     threshold_low: u16,
     threshold_high: u16,
+    max_value: u16,
+    _phantom: core::marker::PhantomData<(DT, E)>,
 }
 
-impl Screen for DebugScreen {
-    async fn draw_init<DT: AppDrawTarget>(&mut self, display: &mut DT) {
+impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
+    async fn draw_init(&mut self, display: &mut DT) {
         display.clear(Rgb565::BLACK).unwrap();
     }
 
-    async fn draw_frame<DT: AppDrawTarget>(&mut self, display: &mut DT) {
+    async fn draw_frame(&mut self, display: &mut DT) {
         let recent_samples = self.adc_history.len().min(10);
         let (avg_adc_value, min_adc_value, max_adc_value) = {
             let recent_iter = || {
@@ -63,7 +67,7 @@ impl Screen for DebugScreen {
             calibration_origin,
             " CALIBRATED TO ",
             self.calibration,
-            hw::COLOR_CALIBRATION,
+            cfg::COLOR_CALIBRATION,
         );
 
         Pointer::new(
@@ -71,9 +75,9 @@ impl Screen for DebugScreen {
             20,
             true,
             if self.is_triggered {
-                hw::COLOR_TRIGGER_HIGH
+                cfg::COLOR_TRIGGER_HIGH
             } else {
-                hw::COLOR_TRIGGER_LOW
+                cfg::COLOR_TRIGGER_LOW
             },
         )
         .draw(display)
@@ -81,14 +85,14 @@ impl Screen for DebugScreen {
 
         let noise_origin = calibration_origin + Point::new(0, 65);
         let noise = (max_adc_value - min_adc_value) / 2;
-        self.draw_value(display, noise_origin, " NOISE ", noise, hw::COLOR_NOISE);
+        self.draw_value(display, noise_origin, " NOISE ", noise, cfg::COLOR_NOISE);
 
         self.draw_value(
             display,
             noise_origin + Point::new(150, 0),
             " TRIG H ",
             self.threshold_high,
-            hw::COLOR_TRIGGER_HIGH,
+            cfg::COLOR_TRIGGER_HIGH,
         );
 
         self.draw_value(
@@ -96,19 +100,26 @@ impl Screen for DebugScreen {
             noise_origin + Point::new(70, 0),
             " TRIG L ",
             self.threshold_low,
-            hw::COLOR_TRIGGER_LOW,
+            cfg::COLOR_TRIGGER_LOW,
         );
     }
 }
 
-impl DebugScreen {
-    pub fn new(calibration: u16) -> Self {
+impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
+    pub fn new(
+        calibration: u16,
+        trigger_threshold_low: f32,
+        trigger_threshold_high: f32,
+        max_value: u16,
+    ) -> Self {
         Self {
             adc_history: HistoryBuffer::new(),
             is_triggered: false,
             calibration,
-            threshold_low: (calibration as f32 * hw::TRIGGER_THRESHOLD_LOW) as u16,
-            threshold_high: (calibration as f32 * hw::TRIGGER_THRESHOLD_HIGH) as u16,
+            threshold_low: (calibration as f32 * trigger_threshold_low) as u16,
+            threshold_high: (calibration as f32 * trigger_threshold_high) as u16,
+            max_value,
+            _phantom: core::marker::PhantomData,
         }
     }
 
@@ -123,12 +134,7 @@ impl DebugScreen {
         }
     }
 
-    fn draw_light_value<DT: AppDrawTarget>(
-        &mut self,
-        display: &mut DT,
-        origin: Point,
-        avg_adc_values: u16,
-    ) {
+    fn draw_light_value(&mut self, display: &mut DT, origin: Point, avg_adc_values: u16) {
         let mut s = String::<128>::default();
 
         TINY_FONT
@@ -137,7 +143,7 @@ impl DebugScreen {
                 origin,
                 VerticalPosition::Top,
                 FontColor::WithBackground {
-                    bg: hw::COLOR_LEVEL,
+                    bg: cfg::COLOR_LEVEL,
                     fg: Rgb565::BLACK,
                 },
                 display,
@@ -165,7 +171,7 @@ impl DebugScreen {
             .unwrap();
     }
 
-    fn draw_bar<DT: AppDrawTarget>(
+    fn draw_bar(
         &mut self,
         display: &mut DT,
         origin: Point,
@@ -179,14 +185,7 @@ impl DebugScreen {
         let mut buffer_data = [Rgb565::BLACK; WIDTH * HEIGHT];
         let mut buffer = FrameBuf::new(&mut buffer_data, WIDTH, HEIGHT);
 
-        let max = match hw::ADC_RESOLUTION {
-            Resolution::Six => 63,
-            Resolution::Eight => 255,
-            Resolution::Ten => 1023,
-            Resolution::Twelve => 4095,
-        };
-
-        let scale = WIDTH as f32 / max as f32;
+        let scale = WIDTH as f32 / self.max_value as f32;
         let scale_value = |x: u16| (x as f32 * scale) as i32;
 
         let bar_y = 10;
@@ -210,7 +209,7 @@ impl DebugScreen {
                         bar_h,
                     ),
                 ),
-                [hw::COLOR_NOISE, Rgb565::CSS_DARK_ORANGE]
+                [cfg::COLOR_NOISE, Rgb565::CSS_DARK_ORANGE]
                     .iter()
                     .cycle()
                     .cloned(),
@@ -221,7 +220,7 @@ impl DebugScreen {
             Point::new(scale_value(avg_adc_value), 10),
             10,
             false,
-            hw::COLOR_LEVEL,
+            cfg::COLOR_LEVEL,
         )
         .draw(&mut buffer)
         .unwrap();
@@ -230,7 +229,7 @@ impl DebugScreen {
             Point::new(scale_value(self.calibration), 15),
             10,
             true,
-            hw::COLOR_CALIBRATION,
+            cfg::COLOR_CALIBRATION,
         )
         .draw(&mut buffer)
         .unwrap();
@@ -239,7 +238,7 @@ impl DebugScreen {
             Point::new(scale_value(self.threshold_low), 15),
             10,
             true,
-            hw::COLOR_TRIGGER_LOW,
+            cfg::COLOR_TRIGGER_LOW,
         )
         .draw(&mut buffer)
         .unwrap();
@@ -248,7 +247,7 @@ impl DebugScreen {
             Point::new(scale_value(self.threshold_high), 15),
             10,
             true,
-            hw::COLOR_TRIGGER_HIGH,
+            cfg::COLOR_TRIGGER_HIGH,
         )
         .draw(&mut buffer)
         .unwrap();
@@ -261,7 +260,7 @@ impl DebugScreen {
             .unwrap();
     }
 
-    fn draw_value<DT: AppDrawTarget>(
+    fn draw_value(
         &mut self,
         display: &mut DT,
         origin: Point,

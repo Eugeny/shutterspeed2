@@ -1,6 +1,7 @@
 [workspace]
-members = ["app", "bootloader", "bootloader-api"]
+members = ["app", "app-ui", "app-measurements", "bootloader", "bootloader-api", "ui-test"]
 default-members = ["app"]
+resolver = "2"
 
 [workspace.dependencies]
 cortex-m = "*"
@@ -12,20 +13,23 @@ stm32f4xx-hal = { version = "0.19", features = [
     "otg-fs",
     "usb_fs",
 ] }
+rtic-monotonics = { version = "1.4.1", features = [
+    "stm32f401cc",
+    "stm32_tim3",
+    "cortex-m-systick",
+] }
+ufmt = "0.2.0"
 
-
-# Uncomment for the panic example.
-# panic-itm = "0.4.1"
-
-# Uncomment for the allocator example.
-# alloc-cortex-m = "0.4.0"
-
-# Uncomment for the device example.
-# Update `memory.x`, set target to `thumbv7em-none-eabihf` in `.cargo/config`,
-# and then use `cargo build --examples device` to build it.
-# [dependencies.stm32f3]
-# features = ["stm32f303", "rt"]
-# version = "0.7.1"
+embedded-graphics = "0.8.0"
+heapless = { version = "0.8.0", features = ["ufmt"] }
+u8g2-fonts = { version = "0.4.0", features = ["embedded_graphics_textstyle"] }
+embedded-text = "0.7.0"
+embedded-graphics-framebuf = "0.5.0"
+enum_dispatch = "0.3.12"
+fugit = "0.3.7"
+cortex-m-microclock = "0.1.0"
+embedded-time = "0.12.1"
+micromath = { version = "2.1.0", features = ["num-traits"] }
 
 
 [profile.release]

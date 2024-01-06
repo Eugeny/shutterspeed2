@@ -3,10 +3,10 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
 
+use app_ui::panic::draw_panic_screen;
 use cortex_m::interrupt::{CriticalSection, Mutex};
 
 use crate::hardware_config::DisplayType;
-use crate::ui::draw_panic_screen;
 
 static PANIC_DISPLAY_REF: Mutex<RefCell<Option<&mut DisplayType>>> = Mutex::new(RefCell::new(None));
 

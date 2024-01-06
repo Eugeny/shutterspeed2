@@ -1,0 +1,38 @@
+cargo-features = ["per-package-target"]
+
+[package]
+authors = ["Eugene <inbox@null.page>"]
+edition = "2018"
+readme = "README.md"
+name = "app-ui"
+version = "0.1.0"
+default-target = "thumbv7m-none-eabi"
+
+[lib]
+name = "app_ui"
+
+[dependencies]
+app-measurements = { path = "../app-measurements" }
+
+# cortex-m-rt = { workspace = true, features = ["set-sp", "set-vtor"] }
+# cortex-m.workspace = true
+# cortex-m-semihosting.workspace = true
+# embedded-hal.workspace = true
+# stm32f4xx-hal.workspace = true
+
+embedded-graphics.workspace = true
+embedded-time.workspace = true
+heapless.workspace = true
+u8g2-fonts.workspace = true
+embedded-text.workspace = true
+embedded-graphics-framebuf.workspace = true
+
+rtic-monotonics = { workspace = true, optional = true }
+ufmt.workspace = true
+fugit.workspace = true
+enum_dispatch.workspace = true
+micromath.workspace = true
+
+
+[features]
+cortex-m = ["rtic-monotonics"]

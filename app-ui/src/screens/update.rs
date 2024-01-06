@@ -1,18 +1,23 @@
+use core::fmt::Debug;
+
 use embedded_graphics::geometry::Point;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
+use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::Drawable;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::Screen;
-use crate::display::AppDrawTarget;
-use crate::ui::fonts::{SMALL_FONT, TINY_FONT};
-use crate::ui::primitives::Cross;
+use crate::fonts::{SMALL_FONT, TINY_FONT};
+use crate::primitives::Cross;
+use crate::AppDrawTarget;
 
-pub struct UpdateScreen {}
+pub struct UpdateScreen<DT, E> {
+    _phantom: core::marker::PhantomData<(DT, E)>,
+}
+
 const COLOR: Rgb565 = Rgb565::BLUE;
 
-impl Screen for UpdateScreen {
-    async fn draw_init<DT: AppDrawTarget>(&mut self, display: &mut DT) {
+impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for UpdateScreen<DT, E> {
+    async fn draw_init(&mut self, display: &mut DT) {
         let width = display.bounding_box().size.width;
         let height = display.bounding_box().size.height;
 
@@ -64,9 +69,15 @@ impl Screen for UpdateScreen {
                 display,
             )
             .unwrap();
-
-        bootloader_api::reboot_into_bootloader()
     }
 
-    async fn draw_frame<DT: AppDrawTarget>(&mut self, _display: &mut DT) {}
+    async fn draw_frame(&mut self, _display: &mut DT) {}
+}
+
+impl<DT: AppDrawTarget<E>, E: Debug> Default for UpdateScreen<DT, E> {
+    fn default() -> Self {
+        Self {
+            _phantom: core::marker::PhantomData,
+        }
+    }
 }

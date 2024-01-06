@@ -1,3 +1,7 @@
+use core::fmt::Debug;
+
+use app_measurements::util::get_closest_shutter_speed;
+use app_measurements::{CalibrationState, MeasurementResult};
 use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::Drawable;
@@ -6,20 +10,21 @@ use u8g2_fonts::types::{FontColor, VerticalPosition};
 use ufmt::uwrite;
 
 use super::Screen;
-use crate::display::AppDrawTarget;
+use crate::chart::draw_chart;
+use crate::fonts::{LARGE_DIGIT_FONT, SMALLER_FONT, SMALL_FONT, TINY_FONT};
 use crate::format::write_fraction;
-use crate::measurement::{CalibrationState, MeasurementResult};
-use crate::ui::fonts::{LARGE_DIGIT_FONT, SMALL_FONT, TINY_FONT, SMALLER_FONT};
-use crate::ui::primitives::Pointer;
-use crate::ui::{draw_chart, draw_speed_ruler, get_closest_shutter_speed};
+use crate::primitives::Pointer;
+use crate::ruler::draw_speed_ruler;
+use crate::AppDrawTarget;
 
-pub struct ResultsScreen {
+pub struct ResultsScreen<DT, E> {
     pub calibration: CalibrationState,
     pub result: MeasurementResult,
+    _phantom: core::marker::PhantomData<(DT, E)>,
 }
 
-impl Screen for ResultsScreen {
-    async fn draw_init<DT: AppDrawTarget>(&mut self, display: &mut DT) {
+impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
+    async fn draw_init(&mut self, display: &mut DT) {
         display.clear(Rgb565::BLACK).unwrap();
 
         draw_speed_ruler(
@@ -38,7 +43,7 @@ impl Screen for ResultsScreen {
         );
     }
 
-    async fn draw_frame<DT: AppDrawTarget>(&mut self, display: &mut DT) {
+    async fn draw_frame(&mut self, display: &mut DT) {
         let ss_origin = Point::new(10, 100);
         self.draw_shutter_speed(display, ss_origin);
 
@@ -50,8 +55,16 @@ impl Screen for ResultsScreen {
     }
 }
 
-impl ResultsScreen {
-    fn draw_shutter_speed<DT: AppDrawTarget>(&mut self, display: &mut DT, origin: Point) {
+impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
+    pub fn new(calibration: CalibrationState, result: MeasurementResult) -> Self {
+        Self {
+            calibration,
+            result,
+            _phantom: core::marker::PhantomData,
+        }
+    }
+
+    fn draw_shutter_speed(&mut self, display: &mut DT, origin: Point) {
         let duration_micros = self.result.integrated_duration_micros.max(1);
         let mut s = String::<128>::default();
 
@@ -123,7 +136,7 @@ impl ResultsScreen {
             .unwrap();
     }
 
-    fn draw_exposure_time<DT: AppDrawTarget>(&mut self, display: &mut DT, origin: Point) {
+    fn draw_exposure_time(&mut self, display: &mut DT, origin: Point) {
         TINY_FONT
             .render(
                 " Exposure time ",
@@ -178,7 +191,7 @@ impl ResultsScreen {
         }
     }
 
-    fn draw_deviation<DT: AppDrawTarget>(&mut self, display: &mut DT, origin: Point) {
+    fn draw_deviation(&mut self, display: &mut DT, origin: Point) {
         let best_match_duration =
             get_closest_shutter_speed(self.result.integrated_duration_micros as f32 / 1_000_000.0);
 

@@ -1,9 +1,12 @@
+cargo-features = ["per-package-target"]
+
 [package]
 authors = ["Eugene <inbox@null.page>"]
 edition = "2018"
 readme = "README.md"
 name = "app"
 version = "0.1.0"
+forced-target = "thumbv7m-none-eabi"
 
 [[bin]]
 name = "app"
@@ -12,6 +15,8 @@ bench = false
 
 [dependencies]
 bootloader-api = { path = "../bootloader-api" }
+app-measurements = { path = "../app-measurements", features = ["cortex-m"] }
+app-ui = { path = "../app-ui", features = ["cortex-m"] }
 
 cortex-m-rt = { workspace = true, features = ["set-sp", "set-vtor"] }
 cortex-m.workspace = true
@@ -19,30 +24,27 @@ cortex-m-semihosting.workspace = true
 embedded-hal.workspace = true
 stm32f4xx-hal.workspace = true
 
+embedded-graphics.workspace = true
+heapless.workspace = true
+u8g2-fonts.workspace = true
+embedded-text.workspace = true
+embedded-graphics-framebuf.workspace = true
+
+rtic-monotonics.workspace = true
+
 mipidsi = "0.7.1"
 display-interface-spi = "0.4.1"
-embedded-graphics = "0.8.0"
-embedded-time = "0.12.1"
-fugit = "0.3.7"
-ufmt = "0.2.0"
-heapless = { version = "0.8.0", features = ["ufmt"] }
-u8g2-fonts = { version = "0.4.0", features = ["embedded_graphics_textstyle"] }
-embedded-text = "0.7.0"
-rtic-monotonics = { version = "1.4.1", features = [
-    "stm32f401cc",
-    "stm32_tim3",
-    "cortex-m-systick",
-] }
+embedded-time.workspace = true
+fugit.workspace = true
+ufmt.workspace = true
 rtic = { version = "2", features = [
     "cortex-m",
     "rtic-monotonics",
     "thumbv7-backend",
 ] }
-cortex-m-microclock = "0.1.0"
-micromath = { version = "2.1.0", features = ["num-traits"] }
+cortex-m-microclock.workspace = true
 embedded-alloc = "0.5.1"
-enum_dispatch = "0.3.12"
-embedded-graphics-framebuf = "0.5.0"
+enum_dispatch.workspace = true
 usb-device = "0.3.0"
 usbd-serial = "0.2.0"
 ouroboros = { version = "0.18.2", default-features = false }

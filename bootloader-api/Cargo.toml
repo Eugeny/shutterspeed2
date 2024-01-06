@@ -1,9 +1,13 @@
+cargo-features = ["per-package-target"]
+
 [package]
 authors = ["Eugene <inbox@null.page>"]
 edition = "2018"
 readme = "README.md"
 name = "bootloader-api"
 version = "0.1.0"
+forced-target = "thumbv7m-none-eabi"
+
 
 [lib]
 name = "bootloader_api"

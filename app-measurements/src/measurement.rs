@@ -1,6 +1,5 @@
 use heapless::HistoryBuffer;
 
-use crate::hardware_config as hw;
 use crate::util::{HistoryBufferDoubleEndedIterator, LaxDuration, LaxMonotonic};
 
 #[derive(Clone, Debug)]
@@ -134,7 +133,7 @@ impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
         if self.buffer.len() > self.buffer.capacity() - MARGIN_SAMPLES {
             // Compactify samples in the buffer by discarding every 2nd item
             let factor = 2;
-            compactify_history_buffer(&mut self.buffer, factor);
+            compactify_history_buffer(self.buffer, factor);
             self.samples_since_start /= factor;
             self.sample_rate.mul(factor as u32);
 
@@ -143,7 +142,7 @@ impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
             };
         }
 
-        return SamplingBufferWriteResult::Sampled;
+        SamplingBufferWriteResult::Sampled
     }
 }
 
@@ -174,6 +173,7 @@ pub struct MeasurementResult {
     pub samples_since_end: usize,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Measurement<'a, M: LaxMonotonic> {
     Idle {
         buffer: &'a mut RingBuffer,
@@ -201,11 +201,16 @@ pub enum Measurement<'a, M: LaxMonotonic> {
 static mut TMP_BUFFER: RingBuffer = RingBuffer::new();
 
 impl<'a, M: LaxMonotonic> Measurement<'a, M> {
-    pub fn new(calibration_value: u16, buffer: &'a mut RingBuffer) -> Self {
+    pub fn new(
+        calibration_value: u16,
+        buffer: &'a mut RingBuffer,
+        trigger_threshold_low: f32,
+        trigger_threshold_high: f32,
+    ) -> Self {
         Self::Idle {
             buffer,
-            trigger_low: (calibration_value as f32 * hw::TRIGGER_THRESHOLD_LOW) as u16,
-            trigger_high: (calibration_value as f32 * hw::TRIGGER_THRESHOLD_HIGH) as u16,
+            trigger_low: (calibration_value as f32 * trigger_threshold_low) as u16,
+            trigger_high: (calibration_value as f32 * trigger_threshold_high) as u16,
         }
     }
 
@@ -295,7 +300,7 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     let t_end = M::now();
 
                     let samples_since_start = sampling_buffer.samples_since_start();
-                    let sample_rate = sampling_buffer.sample_rate().clone();
+                    let sample_rate = *sampling_buffer.sample_rate();
 
                     let sample_buffer = core::mem::replace(
                         sampling_buffer,
@@ -318,12 +323,11 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     *self = Self::Trailing {
                         duration_micros,
                         buffer: sample_buffer,
-                        samples_since_start: samples_since_start,
+                        samples_since_start,
                         samples_since_end: 0,
                         integrated_duration_micros,
                         sample_rate,
-                    };
-                    return;
+                    }
                 }
             }
             Self::Trailing {

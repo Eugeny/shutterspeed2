@@ -24,17 +24,15 @@ rustflags = [
   # "-C", "linker=arm-none-eabi-gcc",
   # "-C", "link-arg=-Wl,-Tlink.x",
   # "-C", "link-arg=-nostartfiles",
-  # "-C", "force-unwind-tables",
+  "-C", "force-unwind-tables",
 ]
 
 [build]
-# target = "thumbv7m-none-eabi"        # Cortex-M3
-
-
 # Pick ONE of these default compilation targets
 # target = "thumbv6m-none-eabi"        # Cortex-M0 and Cortex-M0+
+target = "thumbv7m-none-eabi"        # Cortex-M3
 # target = "thumbv7em-none-eabi"       # Cortex-M4 and Cortex-M7 (no FPU)
-# target = "thumbv7em-none-eabihf"     # Cortex-M4F and Cortex-M7F (with FPU)
+# target = "thumbv7m-none-eabi"     # Cortex-M4F and Cortex-M7F (with FPU)
 # target = "thumbv8m.base-none-eabi"   # Cortex-M23
 # target = "thumbv8m.main-none-eabi"   # Cortex-M33 (no FPU)
 # target = "thumbv8m.main-none-eabihf" # Cortex-M33 (with FPU)

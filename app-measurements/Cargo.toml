@@ -1,0 +1,19 @@
+[package]
+authors = ["Eugene <inbox@null.page>"]
+edition = "2018"
+readme = "README.md"
+name = "app-measurements"
+version = "0.1.0"
+
+[lib]
+name = "app_measurements"
+
+[dependencies]
+heapless.workspace = true
+fugit.workspace = true
+rtic-monotonics = { workspace = true, optional = true }
+cortex-m-microclock = { workspace = true, optional = true }
+micromath.workspace = true
+
+[features]
+cortex-m = ["cortex-m-microclock", "rtic-monotonics"]

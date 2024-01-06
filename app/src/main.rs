@@ -7,12 +7,8 @@
 
 use embedded_alloc::Heap;
 mod display;
-mod format;
 mod hardware_config;
-mod measurement;
 mod panic;
-mod ui;
-mod util;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -21,13 +17,18 @@ static HEAP: Heap = Heap::empty();
 mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
+    use core::ops::Deref;
     use core::panic;
 
+    use app_measurements::{CalibrationState, CycleCounterClock, Measurement, RingBuffer};
+    use app_ui::{
+        BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen,
+        Screens, StartScreen, UpdateScreen,
+    };
     #[cfg(usb)]
     use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
-    use enum_dispatch::enum_dispatch;
-    use hal::adc::config::{AdcConfig, Clock, Dma, Scan, Sequence};
+    use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
     use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
@@ -38,6 +39,7 @@ mod app {
     use hal::prelude::*;
     use hal::spi::Spi;
     use hal::timer::{CounterHz, Event, Flag};
+    use mipidsi::Error as MipidsiError;
     #[cfg(usb)]
     use ouroboros::self_referencing;
     use rtic_monotonics::systick::Systick;
@@ -50,16 +52,9 @@ mod app {
     #[cfg(usb)]
     use usbd_serial::SerialPort;
 
-    use crate::display::{AppDrawTarget, Display};
+    use crate::display::Display;
     use crate::hardware_config::{self as hw, AllGpio, DisplayType};
-    use crate::measurement::{CalibrationState, Measurement, RingBuffer};
     use crate::panic::set_panic_display_ref;
-    use crate::ui::draw_boot_screen;
-    use crate::ui::screens::{
-        CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen, StartScreen,
-        UpdateScreen,
-    };
-    use crate::util::CycleCounterClock;
 
     type DMATransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
 
@@ -316,7 +311,12 @@ mod app {
                 sample_counter: Wrapping(0),
                 app_mode: AppMode::Start,
                 calibration_state: CalibrationState::Done(0),
-                measurement: Measurement::new(0, unsafe { &mut MEASUREMENT_BUFFER }),
+                measurement: Measurement::new(
+                    0,
+                    unsafe { &mut MEASUREMENT_BUFFER },
+                    hw::TRIGGER_THRESHOLD_LOW,
+                    hw::TRIGGER_THRESHOLD_HIGH,
+                ),
                 display,
                 #[cfg(usb)]
                 usb_devices: UsbDevices::make(usb_bus),
@@ -430,7 +430,12 @@ mod app {
 
         let calibration_value = ctx.shared.calibration_state.lock(|state| state.finish());
         ctx.shared.measurement.lock(|measurement| {
-            *measurement = Measurement::new(calibration_value, unsafe { &mut MEASUREMENT_BUFFER });
+            *measurement = Measurement::new(
+                calibration_value,
+                unsafe { &mut MEASUREMENT_BUFFER },
+                hw::TRIGGER_THRESHOLD_LOW,
+                hw::TRIGGER_THRESHOLD_HIGH,
+            );
         });
 
         ctx.shared.app_mode.lock(|app_mode| {
@@ -509,26 +514,16 @@ mod app {
         }
     }
 
-    #[enum_dispatch(Screen)]
-    #[allow(clippy::large_enum_variant, clippy::enum_variant_names)]
-    enum Screens {
-        StartScreen,
-        CalibrationScreen,
-        MeasurementScreen,
-        DebugScreen,
-        ResultsScreen,
-        UpdateScreen,
-    }
-
     #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
     async fn display_task(mut cx: display_task::Context) {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
 
-        draw_boot_screen(display).await;
+        BootScreen::default().draw_init(&mut **display).await;
 
         let mut mode = AppMode::None;
-        let mut screen: Screens = StartScreen {}.into();
+        let mut screen: Screens<<DisplayType as Deref>::Target, MipidsiError> =
+            StartScreen::default().into();
 
         loop {
             let now = Systick::now();
@@ -542,19 +537,26 @@ mod app {
             }) {
                 match changed_mode {
                     AppMode::Start => {
-                        screen = StartScreen {}.into();
+                        screen = Screens::Start(StartScreen::default());
                     }
                     AppMode::Calibrating => {
-                        screen = CalibrationScreen {}.into();
+                        screen = Screens::Calibration(CalibrationScreen::default());
                     }
                     AppMode::Measure => {
-                        screen = MeasurementScreen {}.into();
+                        screen = Screens::Measurement(MeasurementScreen::default());
                     }
                     AppMode::Debug => {
-                        screen = DebugScreen::new(
+                        screen = Screens::Debug(DebugScreen::new(
                             cx.shared.calibration_state.lock(core::mem::take).finish(),
-                        )
-                        .into();
+                            hw::TRIGGER_THRESHOLD_LOW,
+                            hw::TRIGGER_THRESHOLD_HIGH,
+                            match hw::ADC_RESOLUTION {
+                                Resolution::Six => 63,
+                                Resolution::Eight => 255,
+                                Resolution::Ten => 1023,
+                                Resolution::Twelve => 4095,
+                            },
+                        ));
                     }
                     AppMode::Results => {
                         let calibration = cx.shared.calibration_state.lock(core::mem::take);
@@ -564,29 +566,29 @@ mod app {
                             .lock(|m| {
                                 core::mem::replace(
                                     m,
-                                    Measurement::new(Default::default(), unsafe {
-                                        &mut MEASUREMENT_BUFFER
-                                    }),
+                                    Measurement::new(
+                                        Default::default(),
+                                        unsafe { &mut MEASUREMENT_BUFFER },
+                                        hw::TRIGGER_THRESHOLD_LOW,
+                                        hw::TRIGGER_THRESHOLD_HIGH,
+                                    ),
                                 )
                             })
                             .take_result()
                             .unwrap();
-                        screen = ResultsScreen {
-                            calibration,
-                            result,
-                        }
-                        .into();
+                        screen = Screens::Results(ResultsScreen::new(calibration, result));
                     }
                     AppMode::Update => {
-                        screen = UpdateScreen {}.into();
+                        screen = Screens::Update(UpdateScreen::default());
                     }
                     AppMode::None => (),
                 };
                 screen.draw_init(&mut **display).await;
             }
 
+            #[allow(clippy::single_match)]
             match screen {
-                Screens::DebugScreen(ref mut screen) => {
+                Screens::Debug(ref mut screen) => {
                     let adc_value = cx.shared.adc_value.lock(|adc_value| *adc_value);
                     screen.step(adc_value);
                 }
@@ -595,7 +597,13 @@ mod app {
 
             screen.draw_frame(&mut **display).await;
 
-            let deadline = if matches!(screen, Screens::DebugScreen(_)) {
+            #[allow(clippy::single_match)]
+            match screen {
+                Screens::Update(_) => bootloader_api::reboot_into_bootloader(),
+                _ => (),
+            }
+
+            let deadline = if matches!(screen, Screens::Debug(_)) {
                 Systick::now() + 5.millis()
             } else {
                 now + 250.millis()

@@ -1,7 +1,12 @@
+#[cfg(feature = "cortex-m")]
 use cortex_m_microclock::CYCCNTClock;
 use heapless::HistoryBuffer;
+#[cfg(feature = "cortex-m")]
 use rtic_monotonics::systick::Systick;
+#[cfg(feature = "cortex-m")]
 use rtic_monotonics::Monotonic;
+#[cfg(feature = "cortex-m")]
+use micromath::F32Ext;
 
 pub trait LaxDuration {
     fn to_micros(&self) -> u64;
@@ -35,6 +40,7 @@ pub trait LaxMonotonic {
     fn now() -> Self::Instant;
 }
 
+#[cfg(feature = "cortex-m")]
 impl LaxMonotonic for Systick {
     type Instant = <Systick as Monotonic>::Instant;
     type Duration = <Systick as Monotonic>::Duration;
@@ -44,8 +50,10 @@ impl LaxMonotonic for Systick {
     }
 }
 
+#[cfg(feature = "cortex-m")]
 pub struct CycleCounterClock<const CLK: u32> {}
 
+#[cfg(feature = "cortex-m")]
 impl<const CLK: u32> LaxMonotonic for CycleCounterClock<CLK> {
     type Instant = fugit::TimerInstantU64<CLK>;
     type Duration = fugit::TimerDurationU64<CLK>;
@@ -93,7 +101,7 @@ impl<'a, T, const N: usize> Iterator for HistoryBufferDoubleEndedIterator<'a, T,
     }
 }
 
-impl<'a, T, const N: usize> DoubleEndedIterator for HistoryBufferDoubleEndedIterator<'_, T, N> {
+impl<T, const N: usize> DoubleEndedIterator for HistoryBufferDoubleEndedIterator<'_, T, N> {
     fn next_back(&mut self) -> Option<Self::Item> {
         let (a, b) = self.buf.as_slices();
         if self.cur_back == 0 {
@@ -108,4 +116,35 @@ impl<'a, T, const N: usize> DoubleEndedIterator for HistoryBufferDoubleEndedIter
             None
         }
     }
+}
+
+pub const KNOWN_SHUTTER_DURATIONS: [f32; 18] = [
+    8.0,
+    4.0,
+    2.0,
+    1.0,
+    1.0 / 2.0,
+    1.0 / 4.0,
+    1.0 / 8.0,
+    1.0 / 15.0,
+    1.0 / 30.0,
+    1.0 / 60.0,
+    1.0 / 125.0,
+    1.0 / 250.0,
+    1.0 / 500.0,
+    1.0 / 1000.0,
+    1.0 / 2000.0,
+    1.0 / 4000.0,
+    1.0 / 8000.0,
+    1.0 / 16000.0,
+];
+
+pub fn get_closest_shutter_speed(duration: f32) -> f32 {
+    let mut best_match = 1.0;
+    for d in KNOWN_SHUTTER_DURATIONS.iter() {
+        if (d - duration).abs() < (best_match - duration).abs() {
+            best_match = *d;
+        }
+    }
+    best_match
 }
