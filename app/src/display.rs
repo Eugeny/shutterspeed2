@@ -1,9 +1,12 @@
-use core::ops::{Deref, DerefMut};
-
+use app_ui::FXParams;
+#[cfg(feature = "effects")]
+use app_ui::FX;
 use display_interface_spi::SPIInterfaceNoCS;
 use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::geometry::OriginDimensions;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::geometry::Dimensions;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::primitives::Rectangle;
+use embedded_graphics::Pixel;
 use embedded_hal::blocking::delay::DelayUs;
 use mipidsi::models::ST7789;
 use stm32f4xx_hal::gpio::{ErasedPin, Output};
@@ -14,6 +17,7 @@ impl<W: embedded_hal::blocking::spi::Write<u8>> DisplayInterface for W {}
 pub struct Display<DI: DisplayInterface> {
     inner: mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
     backlight_pin: ErasedPin<Output>,
+    fx_params: FXParams,
 }
 
 impl<DI: DisplayInterface> Display<DI> {
@@ -33,11 +37,12 @@ impl<DI: DisplayInterface> Display<DI> {
         Display {
             inner: display,
             backlight_pin,
+            fx_params: FXParams::default(),
         }
     }
 
-    pub fn clear(&mut self) {
-        self.inner.clear(Rgb565::BLACK).unwrap();
+    pub fn step_fx(&mut self) {
+        self.fx_params.step();
     }
 
     pub fn backlight_on(&mut self) {
@@ -55,25 +60,47 @@ impl<DI: DisplayInterface> Display<DI> {
     }
 
     pub fn height(&self) -> u32 {
-        self.size().height
+        self.bounding_box().size.height
     }
 
     pub fn width(&self) -> u32 {
-        self.size().width
+        self.bounding_box().size.width
     }
 }
 
-impl<DI: DisplayInterface> Deref for Display<DI> {
-    type Target =
-        mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+impl<DI: DisplayInterface> Dimensions for Display<DI> {
+    fn bounding_box(&self) -> Rectangle {
+        self.inner.bounding_box()
     }
 }
 
-impl<DI: DisplayInterface> DerefMut for Display<DI> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+impl<DI: DisplayInterface> DrawTarget for Display<DI> {
+    type Color = Rgb565;
+    type Error = mipidsi::Error;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>,
+    {
+        #[cfg(feature = "effects")]
+        let mut d = FX::new(&mut self.inner, self.fx_params);
+        #[cfg(not(feature = "effects"))]
+        let d = &mut self.inner;
+        d.draw_iter(pixels)
+    }
+
+    fn fill_contiguous<I>(&mut self, area: &Rectangle, colors: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Self::Color>,
+    {
+        #[cfg(feature = "effects")]
+        let mut d = FX::new(&mut self.inner, self.fx_params);
+        #[cfg(not(feature = "effects"))]
+        let d = &mut self.inner;
+        d.fill_contiguous(area, colors)
+    }
+
+    fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
+        self.inner.fill_solid(&self.bounding_box(), color)
     }
 }

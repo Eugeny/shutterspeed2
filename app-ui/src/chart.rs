@@ -1,14 +1,18 @@
 use core::fmt::Debug;
 
 use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
-use embedded_graphics::primitives::Rectangle;
+use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::primitives::{Line, Primitive, PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::Drawable;
-use heapless::HistoryBuffer;
+use heapless::{HistoryBuffer, String};
 #[cfg(feature = "cortex-m")]
 use micromath::F32Ext;
+use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
+use ufmt::uwrite;
 
-use crate::primitives::{Cross, Pointer};
+use crate::config::COLOR_BACKGROUND;
+use crate::fonts::{TINIER_FONT, TINY_FONT};
+// use crate::primitives::{Pointer};
 use crate::{config as cfg, AppDrawTarget};
 
 pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
@@ -17,30 +21,48 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
     graph_y: i32,
     samples_since_start: Option<usize>,
     samples_since_end: Option<usize>,
+    raw_micros: u64,
+    integrated_micros: u64,
     clear: bool,
 ) {
     let padding = 10;
 
     let len = chart.len();
-    let width = display.bounding_box().size.width - padding * 2;
-    let graph_rect = Rectangle::new(Point::new(padding as i32, graph_y), Size::new(width, 40));
+    let max_width = display.bounding_box().size.width - padding * 2;
 
-    if clear {
-        display.fill_solid(&graph_rect, Rgb565::BLACK).unwrap();
-    }
+    let mut y_min = *chart.iter().min().unwrap_or(&0);
+    let mut y_max = *chart.iter().max().unwrap_or(&0).max(&(y_min + 1));
 
-    let mut y_min = chart.iter().min().cloned().unwrap_or(0);
-    let mut y_max = chart.iter().max().cloned().unwrap_or(0).max(y_min + 1);
-
+    // Scale y down if the chart is super flat
     if (y_max - y_min) < 10 {
         y_max = y_max.saturating_add(50);
         y_min = y_min.saturating_sub(50)
     }
 
-    let chunk_size = ((len as f32 / width as f32).ceil() as u32).max(1);
+    // Leave some space below the baseline
+    y_min = y_min.saturating_sub((y_max - y_min) / 5);
+
+    let chunk_size = ((len as f32 / max_width as f32).ceil() as u32).max(1);
     let mut i = 0;
     let mut done = false;
     let mut iter = chart.oldest_ordered();
+
+    // Center the chart
+    let width = chart.len() as u32 / chunk_size as u32;
+
+    let graph_rect = Rectangle::new(
+        Point::new(
+            (display.bounding_box().size.width / 2 - width / 2) as i32,
+            graph_y,
+        ),
+        Size::new(width, 40),
+    );
+
+    if clear {
+        display
+            .fill_solid(&graph_rect, cfg::COLOR_BACKGROUND)
+            .unwrap();
+    }
 
     let xy_to_coords = |x: u16, y: u16| {
         let x = x / chunk_size as u16;
@@ -76,62 +98,142 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
             && sample_index < chart.len() as u16 - samples_since_end.unwrap_or(0) as u16;
 
         let (x, y) = xy_to_coords(sample_index, avg);
-        if is_integrated {
-            display
-                .fill_solid(
-                    &Rectangle::with_corners(
-                        Point::new(x, y),
-                        Point::new(x, graph_rect.bottom_right().unwrap().y),
-                    ),
-                    Rgb565::CSS_DARK_RED,
-                )
-                .unwrap();
-        }
+
+        display
+            .fill_solid(
+                &Rectangle::with_corners(
+                    Point::new(x, y),
+                    Point::new(x, graph_rect.bottom_right().unwrap().y),
+                ),
+                if is_integrated {
+                    cfg::COLOR_CHART_2
+                } else {
+                    cfg::COLOR_CHART_1
+                },
+            )
+            .unwrap();
         display
             .fill_solid(
                 &Rectangle::new(Point::new(x, y), Size::new(2, 2)),
-                Rgb565::RED,
+                if is_integrated {
+                    cfg::COLOR_CHART_3
+                } else {
+                    cfg::COLOR_CHART_2
+                },
             )
             .unwrap();
 
         i += 1;
     }
 
+    let mut start_x = None;
+    let mut end_x = None;
+
     let graph_bottom = graph_rect.bottom_right().unwrap().y;
     if let Some(samples_since_start) = samples_since_start {
-        let start_x = chart.len() - samples_since_start;
-        if let Some(start_y) = chart.get(start_x) {
-            let (x, y) = xy_to_coords(start_x as u16, *start_y);
-            Cross::new(Point::new(x, y), 5, cfg::COLOR_TRIGGER_HIGH)
-                .draw(display)
-                .unwrap();
-
-            Pointer::new(
-                Point::new(x, graph_bottom + 10),
-                10,
-                true,
-                cfg::COLOR_TRIGGER_HIGH,
-            )
-            .draw(display)
-            .unwrap();
+        let start_idx = chart.len() - samples_since_start;
+        if let Some(start_y) = chart.get(start_idx) {
+            start_x = Some(xy_to_coords(start_idx as u16, *start_y).0);
+            // Pointer::new(
+            //     Point::new(start_x.unwrap(), graph_bottom + 10),
+            //     10,
+            //     true,
+            //     cfg::COLOR_TRIGGER_HIGH,
+            // )
+            // .draw(display)
+            // .unwrap();
         }
     }
 
     if let Some(samples_since_end) = samples_since_end {
-        let end_x = chart.len() - samples_since_end;
-        if let Some(end_y) = chart.get(end_x) {
-            let (x, y) = xy_to_coords(end_x as u16, *end_y);
-            Cross::new(Point::new(x, y), 5, cfg::COLOR_TRIGGER_LOW)
-                .draw(display)
-                .unwrap();
-            Pointer::new(
-                Point::new(x, graph_bottom + 10),
-                10,
-                true,
-                cfg::COLOR_TRIGGER_LOW,
-            )
-            .draw(display)
-            .unwrap();
+        let end_idx = chart.len() - samples_since_end;
+        if let Some(end_y) = chart.get(end_idx) {
+            end_x = Some(xy_to_coords(end_idx as u16, *end_y).0);
+            // Pointer::new(
+            //     Point::new(end_x.unwrap(), graph_bottom + 10),
+            //     10,
+            //     true,
+            //     cfg::COLOR_TRIGGER_LOW,
+            // )
+            // .draw(display)
+            // .unwrap();
         }
     }
+
+    if let (Some(start_x), Some(end_x)) = (start_x, end_x) {
+        let start_x = start_x.min(end_x);
+        let end_x = start_x.max(end_x);
+
+        let line_y = graph_bottom + 15;
+
+        let line_style = PrimitiveStyleBuilder::new()
+            .stroke_color(cfg::COLOR_CHART_2)
+            .stroke_width(2)
+            .build();
+
+        Line::new(Point::new(start_x, line_y), Point::new(end_x, line_y))
+            .into_styled(line_style)
+            .draw(display)
+            .unwrap();
+
+        for x in [start_x, end_x] {
+            Line::new(Point::new(x, line_y - 5), Point::new(x, line_y + 5))
+                .into_styled(line_style)
+                .draw(display)
+                .unwrap();
+        }
+
+        // display
+        //     .fill_solid(
+        //         &Rectangle::with_corners(Point::new(start_x, start_y), Point::new(end_x, end_y)),
+        //         cfg::COLOR_CHART_3,
+        //     )
+        //     .unwrap();
+
+        TINIER_FONT
+            .with_line_height(20)
+            .render_aligned(
+                &micros_to_string(raw_micros)[..],
+                Point::new(
+                    (start_x + end_x) / 2,
+                    line_y + TINIER_FONT.get_ascent() as i32 / 2,
+                ),
+                VerticalPosition::Baseline,
+                HorizontalAlignment::Center,
+                FontColor::WithBackground {
+                    fg: cfg::COLOR_CHART_3,
+                    bg: cfg::COLOR_BACKGROUND,
+                },
+                display,
+            )
+            .unwrap();
+
+        TINIER_FONT
+            .with_line_height(20)
+            .render_aligned(
+                &micros_to_string(integrated_micros)[..],
+                Point::new(
+                    graph_rect.center().x,
+                    graph_rect.bottom_right().unwrap().y - 3,
+                ),
+                VerticalPosition::Bottom,
+                HorizontalAlignment::Center,
+                FontColor::Transparent(COLOR_BACKGROUND),
+                display,
+            )
+            .unwrap();
+    }
+}
+
+fn micros_to_string(micros: u64) -> String<128> {
+    let mut s = String::<128>::default();
+
+    if micros > 10000 {
+        let millis = micros / 1000;
+        uwrite!(s, " {} ms ", millis).unwrap();
+    } else {
+        uwrite!(s, " {} us ", micros).unwrap();
+    };
+
+    s
 }

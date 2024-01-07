@@ -33,7 +33,7 @@ fn panic(info: &PanicInfo) -> ! {
         let _ = write!(message, "Could not format panic message");
     }
 
-    draw_panic_screen(&mut **display, message.as_ref());
+    draw_panic_screen(display, message.as_ref());
 
     cortex_m::interrupt::disable();
 

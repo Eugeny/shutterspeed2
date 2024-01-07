@@ -17,7 +17,6 @@ static HEAP: Heap = Heap::empty();
 mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
-    use core::ops::Deref;
     use core::panic;
 
     use app_measurements::{CalibrationState, CycleCounterClock, Measurement, RingBuffer};
@@ -28,6 +27,8 @@ mod app {
     #[cfg(usb)]
     use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
+    use embedded_graphics::pixelcolor::Rgb565;
+    use embedded_graphics::pixelcolor::RgbColor;
     use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, Scan, Sequence};
     use hal::adc::Adc;
     use hal::dma::config::DmaConfig;
@@ -261,17 +262,17 @@ mod app {
                 hw::SPI_FREQ_HZ.Hz(),
                 &clocks,
             );
-            let mut display = Display::new(
+            let display = Display::new(
                 spi,
                 dc_pin.erase(),
                 rst_pin.erase(),
                 backlight_pin.erase(),
                 &mut delay,
             );
-            display.clear();
             display
         };
 
+        display.sneaky_clear(Rgb565::BLACK);
         display.backlight_on();
 
         let mut mode_button_pin = hw::mode_button_pin!(gpio).into_pull_down_input();
@@ -519,11 +520,10 @@ mod app {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
 
-        BootScreen::default().draw_init(&mut **display).await;
+        BootScreen::default().draw_init(display).await;
 
         let mut mode = AppMode::None;
-        let mut screen: Screens<<DisplayType as Deref>::Target, MipidsiError> =
-            StartScreen::default().into();
+        let mut screen: Screens<DisplayType, MipidsiError> = StartScreen::default().into();
 
         loop {
             let now = Systick::now();
@@ -583,7 +583,7 @@ mod app {
                     }
                     AppMode::None => (),
                 };
-                screen.draw_init(&mut **display).await;
+                screen.draw_init(display).await;
             }
 
             #[allow(clippy::single_match)]
@@ -595,7 +595,8 @@ mod app {
                 _ => (),
             }
 
-            screen.draw_frame(&mut **display).await;
+            screen.draw_frame(display).await;
+            display.step_fx();
 
             #[allow(clippy::single_match)]
             match screen {

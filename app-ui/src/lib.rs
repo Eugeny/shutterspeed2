@@ -12,6 +12,7 @@ pub mod panic;
 mod primitives;
 mod ruler;
 mod screens;
+mod fx;
 
 pub use screens::{
     BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen, Screens,
@@ -22,3 +23,4 @@ pub trait AppDrawTarget<E>: DrawTarget<Color = Rgb565, Error = E> {}
 impl<E, D: DrawTarget<Color = Rgb565, Error = E>> AppDrawTarget<E> for D {}
 
 pub use badge::draw_badge;
+pub use fx::{FX,FXParams};

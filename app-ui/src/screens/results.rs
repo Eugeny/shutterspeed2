@@ -38,6 +38,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
             5,
             Some(self.result.samples_since_start),
             Some(self.result.samples_since_end),
+            self.result.duration_micros,
+            self.result.integrated_duration_micros,
             false,
         );
     }
