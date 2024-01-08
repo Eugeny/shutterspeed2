@@ -32,6 +32,7 @@ ufmt.workspace = true
 fugit.workspace = true
 enum_dispatch.workspace = true
 micromath.workspace = true
+eg-seven-segment = "0.2.0"
 
 
 [features]

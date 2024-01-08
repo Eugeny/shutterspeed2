@@ -50,5 +50,6 @@ usbd-serial = "0.2.0"
 ouroboros = { version = "0.18.2", default-features = false }
 
 [features]
+default = ["effects"]
 usb = []
 effects = []

@@ -21,7 +21,6 @@ heapless = "0.8"
 embedded-graphics = "0.8"
 embedded-graphics-simulator = "0.6"
 tokio = { version = "1.35.1", features = ["rt", "macros"] }
-eg-seven-segment = "0.2.0"
 
 [features]
 usb = []

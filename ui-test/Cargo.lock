@@ -43,6 +43,7 @@ name = "app-ui"
 version = "0.1.0"
 dependencies = [
  "app-measurements",
+ "eg-seven-segment",
  "embedded-graphics",
  "embedded-graphics-framebuf",
  "embedded-text",
@@ -768,7 +769,6 @@ version = "0.1.0"
 dependencies = [
  "app-measurements",
  "app-ui",
- "eg-seven-segment",
  "embedded-graphics",
  "embedded-graphics-simulator",
  "heapless",

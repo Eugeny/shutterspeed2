@@ -1,7 +1,6 @@
 use core::fmt::Debug;
 
 use embedded_graphics::geometry::{Point, Size};
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::primitives::{Line, Primitive, PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::Drawable;
 use heapless::{HistoryBuffer, String};
@@ -11,10 +10,10 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use ufmt::uwrite;
 
 use crate::config::COLOR_BACKGROUND;
-use crate::fonts::{TINIER_FONT, TINY_FONT};
-// use crate::primitives::{Pointer};
+use crate::fonts::TINIER_FONT;
 use crate::{config as cfg, AppDrawTarget};
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
     display: &mut D,
     chart: &HistoryBuffer<u16, LEN>,
@@ -48,7 +47,7 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
     let mut iter = chart.oldest_ordered();
 
     // Center the chart
-    let width = chart.len() as u32 / chunk_size as u32;
+    let width = chart.len() as u32 / chunk_size;
 
     let graph_rect = Rectangle::new(
         Point::new(
@@ -134,14 +133,6 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
         let start_idx = chart.len() - samples_since_start;
         if let Some(start_y) = chart.get(start_idx) {
             start_x = Some(xy_to_coords(start_idx as u16, *start_y).0);
-            // Pointer::new(
-            //     Point::new(start_x.unwrap(), graph_bottom + 10),
-            //     10,
-            //     true,
-            //     cfg::COLOR_TRIGGER_HIGH,
-            // )
-            // .draw(display)
-            // .unwrap();
         }
     }
 
@@ -149,14 +140,6 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
         let end_idx = chart.len() - samples_since_end;
         if let Some(end_y) = chart.get(end_idx) {
             end_x = Some(xy_to_coords(end_idx as u16, *end_y).0);
-            // Pointer::new(
-            //     Point::new(end_x.unwrap(), graph_bottom + 10),
-            //     10,
-            //     true,
-            //     cfg::COLOR_TRIGGER_LOW,
-            // )
-            // .draw(display)
-            // .unwrap();
         }
     }
 

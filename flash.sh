@@ -2,7 +2,7 @@
 set -e
 
 cargo build -p bootloader --release
-cargo build -p app --release
+cargo build -p app --release $@
 
 rust-objcopy -O binary target/thumbv7m-none-eabi/release/bootloader firmware.bootloader.bin
 rust-objcopy -O binary target/thumbv7m-none-eabi/release/app firmware.app.bin

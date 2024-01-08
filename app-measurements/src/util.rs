@@ -118,7 +118,10 @@ impl<T, const N: usize> DoubleEndedIterator for HistoryBufferDoubleEndedIterator
     }
 }
 
-pub const KNOWN_SHUTTER_DURATIONS: [f32; 18] = [
+pub const KNOWN_SHUTTER_DURATIONS: [f32; 21] = [
+    64.0,
+    32.0,
+    16.0,
     8.0,
     4.0,
     2.0,

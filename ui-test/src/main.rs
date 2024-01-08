@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use app_measurements::{CalibrationState, MeasurementResult};
 use app_ui::{
-    BootScreen, CalibrationScreen, MeasurementScreen, ResultsScreen, Screen, Screens, StartScreen,
-    UpdateScreen, FX, FXParams,
+    BootScreen, CalibrationScreen, FXParams, MeasurementScreen, ResultsScreen, Screen, Screens,
+    StartScreen, UpdateScreen, FX,
 };
 use embedded_graphics::geometry::Size;
 use embedded_graphics_simulator::sdl2::Keycode;
@@ -29,7 +29,7 @@ async fn main() {
 
     'outer: loop {
         screen.draw_frame(&mut display).await;
-        w.update(&display.inner());
+        w.update(display.inner());
         display.step_params();
 
         for e in w.events() {
@@ -51,8 +51,10 @@ async fn main() {
                             for _ in 0..margin {
                                 sample_buffer.write(baseline);
                             }
-                            for i in 0..size - margin*2 {
-                                sample_buffer.write(((i as f32 / 300.0 * PI).sin() * 128.0) as u16 + baseline);
+                            for i in 0..size - margin * 2 {
+                                sample_buffer.write(
+                                    ((i as f32 / 300.0 * PI).sin() * 128.0) as u16 + baseline,
+                                );
                             }
                             for _ in 0..margin {
                                 sample_buffer.write(baseline);
@@ -61,7 +63,7 @@ async fn main() {
                                 CalibrationState::Done(128),
                                 MeasurementResult {
                                     duration_micros: 125,
-                                    integrated_duration_micros: 100,
+                                    integrated_duration_micros: 1000000 / 53,
                                     sample_buffer,
                                     samples_since_end: margin + 30,
                                     samples_since_start: size - margin - 30,
@@ -69,7 +71,7 @@ async fn main() {
                             )
                             .into()
                         }
-                        Keycode::Y => screen = UpdateScreen::default().into(),
+                        Keycode::T => screen = UpdateScreen::default().into(),
                         _ => (),
                     }
                     screen.draw_init(&mut display).await;

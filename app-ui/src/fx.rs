@@ -1,6 +1,6 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::Dimensions;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+use embedded_graphics::pixelcolor::{Rgb565, RgbColor, IntoStorage};
 use embedded_graphics::primitives::{PointsIter, Rectangle};
 use embedded_graphics::Pixel;
 
@@ -17,6 +17,7 @@ pub struct FXParams {
     t: u32,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for FXParams {
     fn default() -> Self {
         Self { t: 0 }
@@ -37,6 +38,9 @@ impl<'a, DT: AppDrawTarget<E>, E> FX<'a, DT, E> {
     }
 
     fn map_pixel(mut p: Pixel<Rgb565>, params: FXParams) -> Rgb565 {
+        if p.1.into_storage() == 0 {
+            return p.1
+        }
         let is_odd = (p.0.x % 2 == 1) ^ (p.0.y % 2 == 1) ^ (params.t % 2 == 1);
         const D: u16 =50;
         const DR: u8 = (D * Rgb565::MAX_R as u16 / 255) as u8;

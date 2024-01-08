@@ -262,14 +262,14 @@ mod app {
                 hw::SPI_FREQ_HZ.Hz(),
                 &clocks,
             );
-            let display = Display::new(
+
+            Display::new(
                 spi,
                 dc_pin.erase(),
                 rst_pin.erase(),
                 backlight_pin.erase(),
                 &mut delay,
-            );
-            display
+            )
         };
 
         display.sneaky_clear(Rgb565::BLACK);
@@ -607,7 +607,7 @@ mod app {
             let deadline = if matches!(screen, Screens::Debug(_)) {
                 Systick::now() + 5.millis()
             } else {
-                now + 250.millis()
+                now + 25.millis()
             };
             Systick::delay_until(deadline).await;
         }

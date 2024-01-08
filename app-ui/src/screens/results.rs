@@ -2,7 +2,10 @@ use core::fmt::Debug;
 
 use app_measurements::util::get_closest_shutter_speed;
 use app_measurements::{CalibrationState, MeasurementResult};
-use embedded_graphics::geometry::Point;
+use eg_seven_segment::SevenSegmentStyleBuilder;
+use embedded_graphics::geometry::{Point, Size};
+use embedded_graphics::primitives::{Line, PrimitiveStyleBuilder, StyledDrawable};
+use embedded_graphics::text::Text;
 use embedded_graphics::Drawable;
 use heapless::String;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
@@ -10,7 +13,7 @@ use ufmt::uwrite;
 
 use super::Screen;
 use crate::chart::draw_chart;
-use crate::fonts::{LARGE_DIGIT_FONT, SMALLER_FONT, SMALL_FONT, TINY_FONT};
+use crate::fonts::TINY_FONT;
 use crate::format::write_fraction;
 use crate::primitives::Pointer;
 use crate::ruler::draw_speed_ruler;
@@ -26,12 +29,6 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
     async fn draw_init(&mut self, display: &mut DT) {
         display.clear(cfg::COLOR_BACKGROUND).unwrap();
 
-        draw_speed_ruler(
-            display,
-            Point::new(0, 290),
-            self.result.integrated_duration_micros as f32 / 1_000_000.0,
-        );
-
         draw_chart(
             display,
             &self.result.sample_buffer,
@@ -45,15 +42,26 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
     }
 
     async fn draw_frame(&mut self, display: &mut DT) {
-        let ss_origin = Point::new(10, 100);
+        let ss_origin = Point::new(display.bounding_box().center().x, 100);
         self.draw_shutter_speed(display, ss_origin);
+        self.draw_deviation(display, ss_origin + Point::new(0, 130));
 
-        let deviation_origin = ss_origin + Point::new(0, 90);
-        self.draw_deviation(display, deviation_origin);
-
-        let exposure_time_origin = deviation_origin + Point::new(80, 0);
-        self.draw_exposure_time(display, exposure_time_origin);
+        draw_speed_ruler(
+            display,
+            Point::new(0, 290),
+            self.result.integrated_duration_micros as f32 / 1_000_000.0,
+        );
     }
+}
+
+fn micros_to_shutter_speed_str(micros: u64) -> String<128> {
+    let mut s = String::<128>::default();
+    if micros < 500_000 {
+        write_fraction(&mut s, 1_000_000_f32 / micros as f32);
+    } else {
+        write_fraction(&mut s, micros as f32 / 1_000_000_f32);
+    }
+    s
 }
 
 impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
@@ -67,67 +75,64 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
 
     fn draw_shutter_speed(&mut self, display: &mut DT, origin: Point) {
         let duration_micros = self.result.integrated_duration_micros.max(1);
-        let mut s = String::<128>::default();
 
-        let dim = if duration_micros < 500_000 {
-            write_fraction(&mut s, 1_000_000_f32 / duration_micros as f32);
-            SMALL_FONT
-                .render(
-                    "1/",
-                    origin + Point::new(5, 30),
-                    VerticalPosition::Top,
-                    FontColor::WithBackground {
-                        fg: cfg::COLOR_RESULT_VALUE_FADED,
-                        bg: cfg::COLOR_BACKGROUND,
-                    },
+        let is_inverse = duration_micros < 500_000;
+
+        let small_style = SevenSegmentStyleBuilder::new()
+            .digit_size(Size::new(12, 23)) // digits are 10x20 pixels
+            .digit_spacing(5) // 5px spacing between digits
+            .segment_width(3) // 5px wide segments
+            .inactive_segment_color(cfg::COLOR_RESULT_VALUE_INACTIVE)
+            .segment_color(cfg::COLOR_RESULT_VALUE) // active segments are green
+            .build();
+        let large_style = SevenSegmentStyleBuilder::new()
+            .digit_size(Size::new(25, 45)) // digits are 10x20 pixels
+            .digit_spacing(5) // 5px spacing between digits
+            .segment_width(6) // 5px wide segments
+            .inactive_segment_color(cfg::COLOR_RESULT_VALUE_INACTIVE)
+            .segment_color(cfg::COLOR_RESULT_VALUE) // active segments are green
+            .build();
+
+        let number_origin = origin + Point::new(0, 60);
+        let end_point = Text::with_alignment(
+            &micros_to_shutter_speed_str(duration_micros)[..],
+            number_origin,
+            large_style,
+            embedded_graphics::text::Alignment::Center,
+        )
+        .draw(display)
+        .unwrap();
+
+        Text::new("5", end_point + Point::new(10, 0), small_style)
+            .draw(display)
+            .unwrap();
+
+        if is_inverse {
+            let one_ends = Text::new(
+                "1",
+                number_origin * 2 - end_point + Point::new(-25, -20),
+                small_style,
+            )
+            .draw(display)
+            .unwrap();
+
+            Line::new(one_ends, one_ends + Point::new(7, -20))
+                .draw_styled(
+                    &PrimitiveStyleBuilder::new()
+                        .stroke_width(2)
+                        .stroke_color(cfg::COLOR_RESULT_VALUE)
+                        .build(),
                     display,
                 )
                 .unwrap();
-            LARGE_DIGIT_FONT
-                .render(
-                    &s[..],
-                    origin + Point::new(35, 15),
-                    VerticalPosition::Top,
-                    FontColor::WithBackground {
-                        fg: cfg::COLOR_RESULT_VALUE,
-                        bg: cfg::COLOR_BACKGROUND,
-                    },
-                    display,
-                )
-                .unwrap()
-        } else {
-            write_fraction(&mut s, duration_micros as f32 / 1_000_000_f32);
-            LARGE_DIGIT_FONT
-                .render(
-                    &s[..],
-                    origin + Point::new(5, 15),
-                    VerticalPosition::Top,
-                    FontColor::WithBackground {
-                        fg: cfg::COLOR_RESULT_VALUE,
-                        bg: cfg::COLOR_BACKGROUND,
-                    },
-                    display,
-                )
-                .unwrap()
-        };
-        SMALL_FONT
-            .render(
-                "s",
-                dim.bounding_box.unwrap().bottom_right().unwrap() + Point::new(5, -25),
-                VerticalPosition::Top,
-                FontColor::WithBackground {
-                    fg: cfg::COLOR_RESULT_VALUE_FADED,
-                    bg: cfg::COLOR_BACKGROUND,
-                },
-                display,
-            )
-            .unwrap();
+        }
 
         TINY_FONT
-            .render(
+            .render_aligned(
                 " Shutter speed ",
-                origin,
+                origin + Point::new(0, -10),
                 VerticalPosition::Top,
+                u8g2_fonts::types::HorizontalAlignment::Center,
                 FontColor::WithBackground {
                     bg: cfg::COLOR_RESULT_VALUE,
                     fg: cfg::COLOR_BACKGROUND,
@@ -135,61 +140,6 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
                 display,
             )
             .unwrap();
-    }
-
-    fn draw_exposure_time(&mut self, display: &mut DT, origin: Point) {
-        TINY_FONT
-            .render(
-                " Exposure time ",
-                origin,
-                VerticalPosition::Top,
-                FontColor::WithBackground {
-                    bg: cfg::COLOR_RESULT_EXP_TIME,
-                    fg: cfg::COLOR_BACKGROUND,
-                },
-                display,
-            )
-            .unwrap();
-
-        {
-            let mut s = String::<128>::default();
-
-            let micros = self.result.integrated_duration_micros;
-            let label = if micros > 10000 {
-                let millis = micros / 1000;
-                uwrite!(s, "{}", millis).unwrap();
-                "ms"
-            } else {
-                uwrite!(s, "{}", micros).unwrap();
-                "us"
-            };
-
-            let dim = SMALL_FONT
-                .render(
-                    &s[..],
-                    origin + Point::new(5, 25),
-                    VerticalPosition::Top,
-                    FontColor::WithBackground {
-                        fg: cfg::COLOR_RESULT_VALUE,
-                        bg: cfg::COLOR_BACKGROUND,
-                    },
-                    display,
-                )
-                .unwrap();
-
-            TINY_FONT
-                .render(
-                    label,
-                    dim.bounding_box.unwrap().bottom_right().unwrap() + Point::new(5, -16),
-                    VerticalPosition::Top,
-                    FontColor::WithBackground {
-                        fg: cfg::COLOR_RESULT_VALUE_FADED,
-                        bg: cfg::COLOR_BACKGROUND,
-                    },
-                    display,
-                )
-                .unwrap();
-        }
     }
 
     fn draw_deviation(&mut self, display: &mut DT, origin: Point) {
@@ -210,10 +160,11 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
         };
 
         TINY_FONT
-            .render(
+            .render_aligned(
                 " Lag ",
-                origin,
+                origin + Point::new(0, -45),
                 VerticalPosition::Top,
+                u8g2_fonts::types::HorizontalAlignment::Center,
                 FontColor::WithBackground {
                     bg: color,
                     fg: cfg::COLOR_BACKGROUND,
@@ -222,36 +173,52 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
             )
             .unwrap();
 
+        let small_style = SevenSegmentStyleBuilder::new()
+            .digit_size(Size::new(12, 23)) // digits are 10x20 pixels
+            .digit_spacing(5) // 5px spacing between digits
+            .segment_width(3) // 5px wide segments
+            .inactive_segment_color(cfg::COLOR_RESULT_VALUE_INACTIVE)
+            .segment_color(color) // active segments are green
+            .build();
+
         let mut s = String::<128>::default();
         uwrite!(s, "{}", percent_offset.abs()).unwrap();
 
-        let dim = SMALL_FONT
-            .render(
-                &s[..],
-                origin + Point::new(20, 25),
-                VerticalPosition::Top,
-                FontColor::WithBackground {
-                    fg: color,
-                    bg: cfg::COLOR_BACKGROUND,
-                },
-                display,
-            )
-            .unwrap();
-        SMALLER_FONT
-            .render(
-                "%",
-                dim.bounding_box.unwrap().bottom_right().unwrap() + Point::new(3, -18),
-                VerticalPosition::Top,
-                FontColor::WithBackground {
-                    fg: color,
-                    bg: cfg::COLOR_BACKGROUND,
-                },
-                display,
-            )
-            .unwrap();
+        let end_point = Text::with_alignment(
+            &s[..],
+            origin,
+            small_style,
+            embedded_graphics::text::Alignment::Center,
+        )
+        .draw(display)
+        .unwrap();
+
+        let percent_end_point = Text::with_alignment(
+            "°o",
+            end_point + Point::new(15, 0),
+            SevenSegmentStyleBuilder::from(&small_style)
+                .digit_spacing(3)
+                .build(),
+            embedded_graphics::text::Alignment::Center,
+        )
+        .draw(display)
+        .unwrap();
+
+        Line::new(
+            percent_end_point + Point::new(-27, 0),
+            percent_end_point + Point::new(-7, -20),
+        )
+        .draw_styled(
+            &PrimitiveStyleBuilder::new()
+                .stroke_width(3)
+                .stroke_color(color)
+                .build(),
+            display,
+        )
+        .unwrap();
 
         Pointer::new(
-            origin + Point::new(6, if percent_offset > 0 { 30 } else { 40 }),
+            origin * 2 - end_point + Point::new(-10, if percent_offset > 0 { -15 } else { -5 }),
             5,
             percent_offset > 0,
             cfg::COLOR_RESULT_VALUE,
