@@ -1,5 +1,5 @@
 [workspace]
-members = ["app", "app-ui", "app-measurements", "bootloader", "bootloader-api"]
+members = ["app", "app-ui", "app-measurements", "bootloader", "bootloader-api", "config"]
 default-members = ["app"]
 resolver = "2"
 

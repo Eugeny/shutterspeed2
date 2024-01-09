@@ -9,7 +9,7 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Pixel;
 use embedded_hal::blocking::delay::DelayUs;
 use mipidsi::models::ST7789;
-use stm32f4xx_hal::gpio::{ErasedPin, Output};
+use config::hal::gpio::{ErasedPin, Output};
 
 pub trait DisplayInterface: embedded_hal::blocking::spi::Write<u8> {}
 impl<W: embedded_hal::blocking::spi::Write<u8>> DisplayInterface for W {}

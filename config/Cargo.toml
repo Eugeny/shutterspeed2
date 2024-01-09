@@ -1,0 +1,14 @@
+cargo-features = ["per-package-target"]
+
+[package]
+authors = ["Eugene <inbox@null.page>"]
+edition = "2018"
+readme = "README.md"
+name = "config"
+version = "0.1.0"
+forced-target = "thumbv7m-none-eabi"
+
+[lib]
+
+[dependencies]
+stm32f4xx-hal.workspace = true

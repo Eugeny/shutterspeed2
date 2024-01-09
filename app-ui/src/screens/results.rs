@@ -39,18 +39,18 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
             self.result.integrated_duration_micros,
             false,
         );
-    }
-
-    async fn draw_frame(&mut self, display: &mut DT) {
-        let ss_origin = Point::new(display.bounding_box().center().x, 100);
-        self.draw_shutter_speed(display, ss_origin);
-        self.draw_deviation(display, ss_origin + Point::new(0, 130));
 
         draw_speed_ruler(
             display,
             Point::new(0, 290),
             self.result.integrated_duration_micros as f32 / 1_000_000.0,
         );
+    }
+
+    async fn draw_frame(&mut self, display: &mut DT) {
+        let ss_origin = Point::new(display.bounding_box().center().x, 100);
+        self.draw_shutter_speed(display, ss_origin);
+        self.draw_deviation(display, ss_origin + Point::new(0, 130));
     }
 }
 

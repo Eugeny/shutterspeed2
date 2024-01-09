@@ -6,7 +6,7 @@ use core::sync::atomic::{self, Ordering};
 use app_ui::panic::draw_panic_screen;
 use cortex_m::interrupt::{CriticalSection, Mutex};
 
-use crate::hardware_config::DisplayType;
+use super::app::DisplayType;
 
 static PANIC_DISPLAY_REF: Mutex<RefCell<Option<&mut DisplayType>>> = Mutex::new(RefCell::new(None));
 

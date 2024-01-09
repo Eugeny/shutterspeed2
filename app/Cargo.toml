@@ -17,6 +17,7 @@ bench = false
 bootloader-api = { path = "../bootloader-api" }
 app-measurements = { path = "../app-measurements", features = ["cortex-m"] }
 app-ui = { path = "../app-ui", features = ["cortex-m"] }
+config = { path = "../config" }
 
 cortex-m-rt = { workspace = true, features = ["set-sp", "set-vtor"] }
 cortex-m.workspace = true
@@ -50,6 +51,5 @@ usbd-serial = "0.2.0"
 ouroboros = { version = "0.18.2", default-features = false }
 
 [features]
-default = ["effects"]
 usb = []
 effects = []

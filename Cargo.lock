@@ -15,6 +15,7 @@ dependencies = [
  "app-measurements",
  "app-ui",
  "bootloader-api",
+ "config",
  "cortex-m",
  "cortex-m-microclock",
  "cortex-m-rt",
@@ -159,6 +160,13 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
+name = "config"
+version = "0.1.0"
+dependencies = [
+ "stm32f4xx-hal",
+]
 
 [[package]]
 name = "cortex-m"

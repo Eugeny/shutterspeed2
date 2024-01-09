@@ -7,7 +7,6 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Drawable;
 use embedded_graphics_framebuf::FrameBuf;
 use heapless::{HistoryBuffer, String};
-// use stm32f4xx_hal::adc::config::Resolution;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use ufmt::uwrite;
 

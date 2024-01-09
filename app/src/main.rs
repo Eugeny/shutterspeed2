@@ -5,16 +5,10 @@
 #![feature(iter_array_chunks)]
 #![feature(sync_unsafe_cell)]
 
-use embedded_alloc::Heap;
 mod display;
-mod hardware_config;
 mod panic;
 
-#[global_allocator]
-static HEAP: Heap = Heap::empty();
-
-#[rtic::app(device = stm32f4xx_hal::pac, dispatchers = [SPI2, SPI3, SPI4])]
-mod app {
+config::rtic_app!({
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
     use core::panic;
@@ -24,28 +18,23 @@ mod app {
         BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen,
         Screens, StartScreen, UpdateScreen,
     };
+    use config::{self as hw, hal, AllGpio};
     #[cfg(usb)]
     use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
-    use embedded_graphics::pixelcolor::Rgb565;
-    use embedded_graphics::pixelcolor::RgbColor;
-    use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, Scan, Sequence};
-    use hal::adc::Adc;
-    use hal::dma::config::DmaConfig;
-    use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
+    use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+    use hal::adc::config::Resolution;
     use hal::gpio::{Edge, ErasedPin, Input, Output, Speed};
     #[cfg(usb)]
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
-    use hal::pac::{self, Interrupt, ADC1, DMA2, TIM2};
+    use hal::pac::{self, Interrupt};
     use hal::prelude::*;
-    use hal::spi::Spi;
-    use hal::timer::{CounterHz, Event, Flag};
+    use hal::timer::Flag;
     use mipidsi::Error as MipidsiError;
     #[cfg(usb)]
     use ouroboros::self_referencing;
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
-    use stm32f4xx_hal as hal;
     #[cfg(usb)]
     use usb_device::class_prelude::UsbBusAllocator;
     #[cfg(usb)]
@@ -54,10 +43,9 @@ mod app {
     use usbd_serial::SerialPort;
 
     use crate::display::Display;
-    use crate::hardware_config::{self as hw, AllGpio, DisplayType};
     use crate::panic::set_panic_display_ref;
 
-    type DMATransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
+    pub type DisplayType = Display<config::DisplaySpiType>;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum AppMode {
@@ -124,7 +112,7 @@ mod app {
 
     #[shared]
     struct Shared {
-        transfer: DMATransfer,
+        transfer: config::DmaTransfer,
         adc_value: u16,
         sample_counter: Wrapping<u32>,
         app_mode: AppMode,
@@ -137,7 +125,7 @@ mod app {
     #[local]
     struct Local {
         adc_dma_buffer: Option<&'static mut u16>,
-        timer: CounterHz<TIM2>,
+        timer: config::AdcTimerType,
         mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
         led_pin: ErasedPin<Output>,
@@ -148,13 +136,6 @@ mod app {
 
     #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
     fn init(mut cx: init::Context) -> (Shared, Local) {
-        {
-            use core::mem::MaybeUninit;
-            const HEAP_SIZE: usize = 1024;
-            static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-            unsafe { crate::HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
-        }
-
         let mut dp: pac::Peripherals = cx.device;
 
         let gpio = AllGpio {
@@ -188,80 +169,25 @@ mod app {
         cortex_m::asm::delay(10000);
         let mut syscfg = dp.SYSCFG.constrain();
 
-        let rcc = dp.RCC.constrain();
-        let clocks = rcc
-            .cfgr
-            .sysclk(hw::SYSCLK.Hz())
-            .require_pll48clk()
-            .hclk(hw::HCLK.MHz())
-            .use_hse(25.MHz())
-            .pclk1(80.MHz())
-            .pclk2(80.MHz())
-            .freeze();
+        let clocks = config::setup_clocks!(dp);
 
         CYCCNTClock::<{ hw::SYSCLK }>::init(&mut cx.core.DCB, cx.core.DWT);
 
         let systick_token = create_systick_token!();
         Systick::start(cx.core.SYST, hw::SYSCLK, systick_token);
 
-        let adc_pin = hw::adc_pin!(gpio).into_analog();
-        // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
-        // Configure ADC for sequence conversion with interrtups
-        let adc_config = AdcConfig::default()
-            .dma(Dma::Continuous)
-            .scan(Scan::Disabled)
-            .clock(Clock::Pclk2_div_6)
-            .resolution(hw::ADC_RESOLUTION);
+        let adc = config::setup_adc!(dp, gpio);
+        let transfer = config::setup_adc_dma_transfer!(dp, adc, cx.local.first_buffer);
+        let timer = config::setup_adc_timer!(cx.core, dp, &clocks);
+        let mut delay = config::delay_timer!(dp).delay_us(&clocks);
 
-        let mut adc = Adc::adc1(dp.ADC1, true, adc_config);
-        adc.configure_channel(&adc_pin, Sequence::One, hw::SAMPLE_TIME);
-
-        // DMA Configuration
-        let dma = StreamsTuple::new(dp.DMA2);
-        let dma_config = DmaConfig::default()
-            .transfer_complete_interrupt(true)
-            .double_buffer(false);
-
-        let transfer = Transfer::init_peripheral_to_memory(
-            dma.0,
-            adc,
-            cx.local.first_buffer,
-            None,
-            dma_config,
-        );
-
-        let mut timer = dp.TIM2.counter_hz(&clocks);
-        timer.listen(Event::Update);
-        timer.start(hw::SAMPLE_RATE_HZ.Hz()).unwrap();
-
-        unsafe {
-            cx.core
-                .NVIC
-                .set_priority(Interrupt::TIM2, hw::IPRIO_ADC_TIMER);
-        }
-
-        //----
-
-        let mut delay = dp.TIM3.delay_us(&clocks);
         let mut display = {
             let mut dc_pin = hw::display_dc_pin!(gpio).into_push_pull_output();
             let mut rst_pin = hw::display_rst_pin!(gpio).into_push_pull_output();
-            let mut sclk_pin = hw::display_sclk_pin!(gpio).into_alternate();
-            let mut miso_pin = hw::display_miso_pin!(gpio).into_alternate();
-            let mut mosi_pin = hw::display_mosi_pin!(gpio).into_alternate();
 
             dc_pin.set_speed(Speed::VeryHigh);
             rst_pin.set_speed(Speed::VeryHigh);
-            sclk_pin.set_speed(Speed::VeryHigh);
-            miso_pin.set_speed(Speed::VeryHigh);
-            mosi_pin.set_speed(Speed::VeryHigh);
-            let spi = Spi::new(
-                dp.SPI1,
-                (sclk_pin, miso_pin, mosi_pin),
-                embedded_hal::spi::MODE_3,
-                hw::SPI_FREQ_HZ.Hz(),
-                &clocks,
-            );
+            let spi = config::setup_display_spi!(dp, gpio, &clocks);
 
             Display::new(
                 spi,
@@ -334,6 +260,7 @@ mod app {
         )
     }
 
+    // HWCONFIG
     #[task(binds = TIM2, shared = [transfer], local = [timer], priority = 3)]
     fn adcstart(mut cx: adcstart::Context) {
         cx.shared.transfer.lock(|transfer| {
@@ -344,6 +271,7 @@ mod app {
         cx.local.timer.clear_flags(Flag::Update);
     }
 
+    // HWCONFIG
     #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 4)]
     fn mode_button_press(mut cx: mode_button_press::Context) {
         cx.shared.app_mode.lock(|app_mode| match app_mode {
@@ -362,6 +290,7 @@ mod app {
         cx.local.mode_button_pin.clear_interrupt_pending_bit();
     }
 
+    // HWCONFIG
     #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin, led_pin], priority = 4)]
     fn measure_button_press(mut cx: measure_button_press::Context) {
         cx.local.led_pin.toggle();
@@ -372,6 +301,7 @@ mod app {
         cx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
+    // HWCONFIG
     #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [adc_dma_buffer], priority = 3)]
     fn dma(ctx: dma::Context) {
         let mut shared = ctx.shared;
@@ -409,17 +339,6 @@ mod app {
 
     #[task(shared=[app_mode, adc_value, calibration_state, measurement], priority=2)]
     async fn measure_task(mut ctx: measure_task::Context) {
-        // // DEBUG
-        // {
-        //     ctx.shared.app_mode.lock(|app_mode| {
-        //         *app_mode = AppMode::Results;
-        //     });
-        //     ctx.shared.measurement.lock(|measurement| {
-        //         *measurement = Measurement::new_debug_duration(7);
-        //     });
-        //     return;
-        // }
-
         ctx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
@@ -633,4 +552,4 @@ mod app {
     fn usage_fault(_cx: usage_fault::Context) {
         panic!("UsageFault");
     }
-}
+});
