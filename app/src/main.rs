@@ -37,12 +37,11 @@ mod app {
     #[cfg(usb)]
     use ouroboros::self_referencing;
     use rotary_encoder_embedded::standard::StandardMode;
-    use rotary_encoder_embedded::{Direction as EncoderDirection, RotaryEncoder};
+    use rotary_encoder_embedded::{Direction, RotaryEncoder};
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
     use rtic_sync::channel::{Receiver, Sender};
     use rtic_sync::make_channel;
-    use stm32f4xx_hal::dma::traits::Direction;
     #[cfg(usb)]
     use usb_device::class_prelude::UsbBusAllocator;
     #[cfg(usb)]
@@ -250,16 +249,14 @@ mod app {
         let (beep_tx, beep_rx) = make_channel!(Chirp, 1);
         beeper_task::spawn(beep_rx).unwrap();
 
-        let (rotary_tx, rotary_rx) = make_channel!(EncoderDirection, 100);
-
         let rotary = RotaryEncoder::new(
             hw::rotary_dt_pin!(gpio).into_pull_up_input().erase(),
             hw::rotary_clk_pin!(gpio).into_pull_up_input().erase(),
         )
         .into_standard_mode();
-        rotary_encoder_task::spawn(rotary_tx).unwrap();
+        rotary_encoder_task::spawn().unwrap();
 
-        display_task::spawn(rotary_rx).unwrap();
+        display_task::spawn().unwrap();
 
         (
             Shared {
@@ -295,54 +292,16 @@ mod app {
     }
 
     #[task(local=[rotary], shared=[app_mode, selected_menu_option], priority=2)]
-    async fn rotary_encoder_task(
-        mut cx: rotary_encoder_task::Context,
-        mut tx: Sender<'static, EncoderDirection, 100>,
-    ) {
-        fn step_back(shared: &mut rotary_encoder_task::SharedResources) {
-            (&mut shared.app_mode, &mut shared.selected_menu_option).lock(
-                |app_mode, selected_menu_option| match *app_mode {
-                    AppMode::Start | AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
-                        *app_mode = AppMode::Menu;
-                    }
-                    AppMode::Menu => {
-                        if *selected_menu_option == 0 {
-                            *app_mode = AppMode::Start;
-                        } else {
-                            *selected_menu_option -= 1;
-                        }
-                    }
-                    _ => (),
-                },
-            );
-        }
-        fn step_forward(shared: &mut rotary_encoder_task::SharedResources) {
-            (&mut shared.app_mode, &mut shared.selected_menu_option).lock(
-                |app_mode, selected_menu_option| match *app_mode {
-                    AppMode::Start | AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
-                        *app_mode = AppMode::Menu;
-                        *selected_menu_option = 0;
-                    }
-                    AppMode::Menu => {
-                        if *selected_menu_option == MenuScreen::options_len() - 1 {
-                            *app_mode = AppMode::Start;
-                        } else {
-                            *selected_menu_option += 1;
-                        }
-                    }
-                    _ => (),
-                },
-            );
-        }
+    async fn rotary_encoder_task(mut cx: rotary_encoder_task::Context) {
         let encoder = cx.local.rotary;
         loop {
             encoder.update();
             match encoder.direction() {
-                EncoderDirection::None => (),
+                Direction::None => (),
                 x => {
                     let d: isize = match x {
-                        EncoderDirection::Anticlockwise => 1,
-                        EncoderDirection::Clockwise => -1,
+                        Direction::Anticlockwise => 1,
+                        Direction::Clockwise => -1,
                         _ => 0,
                     };
 
@@ -607,10 +566,7 @@ mod app {
     }
 
     #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display, beep_sender, selected_menu_option], priority=1)]
-    async fn display_task(
-        mut cx: display_task::Context,
-        encoder_rx: Receiver<'static, EncoderDirection, 100>,
-    ) {
+    async fn display_task(mut cx: display_task::Context) {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
 

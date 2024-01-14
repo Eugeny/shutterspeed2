@@ -137,7 +137,7 @@ macro_rules! beeper_type {
             pwm: PwmHz<TIM4, ChannelBuilder<TIM4, 2>>,
         }
 
-        impl crate::sound::BeeperExt for Beeper {
+        impl BeeperExt for Beeper {
             fn enable(&mut self, frequency: f32) {
                 use hal::timer::Channel;
 

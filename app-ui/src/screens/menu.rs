@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use embedded_graphics::geometry::{Point, Size};
+use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
@@ -16,7 +16,6 @@ pub struct MenuScreen<DT, E> {
 }
 
 const LABELS: [&str; 4] = [" MEASURE ", " DEBUG ", " SENSITIVITY ", " USB UPDATE "];
-const SENSITIVITY_LABELS: [&str; 3] = [" LO ", " MED ", " HI "];
 
 impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
     async fn draw_init(&mut self, display: &mut DT) {
@@ -45,7 +44,6 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
     async fn draw_frame(&mut self, display: &mut DT) {
         let bg = config::COLOR_BACKGROUND;
         let fg = config::COLOR_RESULT_VALUE;
-        let width = display.bounding_box().size.width;
 
         let mut y_pos = 20;
         let item_height = 50;
@@ -77,7 +75,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
 
             if index == self.position {
                 match index {
-                    0|1|3 => {
+                    0 | 1 | 3 => {
                         SMALL_FONT
                             .render(
                                 ">",
