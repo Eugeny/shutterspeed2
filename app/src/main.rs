@@ -444,13 +444,13 @@ mod app {
         cx.shared.app_mode.lock(|app_mode| match *app_mode {
             AppMode::Menu => match selected_option {
                 0 => {
-                    *app_mode = AppMode::Start;
+                    let _ = measure_task::spawn();
+                    // *app_mode = AppMode::Start;
                 }
                 1 => {
                     *app_mode = AppMode::Debug;
                 }
-                2 => {
-                }
+                2 => {}
                 3 => {
                     *app_mode = AppMode::Update;
                 }
@@ -459,10 +459,7 @@ mod app {
             AppMode::Calibrating | AppMode::Measure => {
                 *app_mode = AppMode::Start;
             }
-            AppMode::Update => {
-
-            }
-                _ => {
+            _ => {
                 let _ = measure_task::spawn();
             }
         });

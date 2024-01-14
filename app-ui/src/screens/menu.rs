@@ -2,7 +2,6 @@ use core::fmt::Debug;
 
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
-use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::Screen;
@@ -16,7 +15,7 @@ pub struct MenuScreen<DT, E> {
     _phantom: core::marker::PhantomData<(DT, E)>,
 }
 
-const LABELS: [&str; 5] = [" MEASURE ", " DEBUG ", " SENSITIVITY ", " UPDATE ", ""];
+const LABELS: [&str; 4] = [" MEASURE ", " DEBUG ", " SENSITIVITY ", " USB UPDATE "];
 const SENSITIVITY_LABELS: [&str; 3] = [" LO ", " MED ", " HI "];
 
 impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
@@ -35,8 +34,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
                 VerticalPosition::Top,
                 HorizontalAlignment::Center,
                 FontColor::WithBackground {
-                    fg: Rgb565::BLACK,
-                    bg: Rgb565::CSS_GRAY,
+                    bg: Rgb565::BLACK,
+                    fg: Rgb565::CSS_PALE_GOLDENROD,
                 },
                 display,
             )
@@ -49,21 +48,22 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
         let width = display.bounding_box().size.width;
 
         let mut y_pos = 20;
+        let item_height = 50;
         let should_draw = self.last_position != self.position;
 
         for (index, label) in LABELS.iter().enumerate() {
             if should_draw {
-                display
-                    .fill_solid(
-                        &Rectangle::new(Point::new(10, y_pos), Size::new(width - 10, 40)),
-                        config::COLOR_BACKGROUND,
-                    )
-                    .unwrap();
+                // display
+                //     .fill_solid(
+                //         &Rectangle::new(Point::new(10, y_pos), Size::new(width - 10, 40)),
+                //         config::COLOR_BACKGROUND,
+                //     )
+                //     .unwrap();
 
                 SMALL_FONT
                     .render(
                         *label,
-                        Point::new(10, y_pos),
+                        Point::new(30, y_pos),
                         VerticalPosition::Top,
                         if index == self.position {
                             FontColor::WithBackground { fg, bg }
@@ -76,70 +76,68 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
             }
 
             if index == self.position {
-                y_pos += 40;
                 match index {
-                    0 => {
+                    0|1|3 => {
                         SMALL_FONT
                             .render(
-                                "< START",
-                                Point::new(10, y_pos),
+                                ">",
+                                Point::new(5, y_pos),
                                 VerticalPosition::Top,
                                 FontColor::Transparent(config::COLOR_MENU_ACTION),
                                 display,
                             )
                             .unwrap();
-                        y_pos += 40;
-                    }
-                    1 => {
-                        SMALL_FONT
-                            .render(
-                                "< START",
-                                Point::new(10, y_pos),
-                                VerticalPosition::Top,
-                                FontColor::Transparent(config::COLOR_MENU_ACTION),
-                                display,
-                            )
-                            .unwrap();
-                        y_pos += 40;
                     }
                     2 => {
-                        let mut x_pos = 10;
-                        for (index, label) in SENSITIVITY_LABELS.iter().enumerate() {
-                            let fg = config::COLOR_MENU_ACTION;
-                            let rect = SMALL_FONT
-                                .render(
-                                    *label,
-                                    Point::new(x_pos, y_pos),
-                                    VerticalPosition::Top,
-                                    if index == self.sensitivity as usize {
-                                        FontColor::WithBackground { fg: bg, bg: fg }
-                                    } else {
-                                        FontColor::WithBackground { fg, bg }
-                                    },
-                                    display,
-                                )
-                                .unwrap();
-                            x_pos = rect.bounding_box.unwrap().bottom_right().unwrap().x;
-                        }
-                        y_pos += 40;
-                    }
-                    3 => {
+                        // let mut x_pos = 10;
+                        // for (index, label) in SENSITIVITY_LABELS.iter().enumerate() {
+                        //     let fg = config::COLOR_MENU_ACTION;
+                        //     let rect = SMALL_FONT
+                        //         .render(
+                        //             *label,
+                        //             Point::new(x_pos, y_pos),
+                        //             VerticalPosition::Top,
+                        //             if index == self.sensitivity as usize {
+                        //                 FontColor::WithBackground { fg: bg, bg: fg }
+                        //             } else {
+                        //                 FontColor::WithBackground { fg, bg }
+                        //             },
+                        //             display,
+                        //         )
+                        //         .unwrap();
+                        //     x_pos = rect.bounding_box.unwrap().bottom_right().unwrap().x;
+                        // }
                         SMALL_FONT
                             .render(
-                                "< DFU MODE",
-                                Point::new(10, y_pos),
+                                ["1", "2", "3"][self.sensitivity as usize],
+                                Point::new(5, y_pos),
                                 VerticalPosition::Top,
-                                FontColor::Transparent(config::COLOR_MENU_ACTION),
+                                FontColor::WithBackground {
+                                    bg: config::COLOR_MENU_ACTION,
+                                    fg: config::COLOR_BACKGROUND,
+                                },
                                 display,
                             )
                             .unwrap();
-                        y_pos += 40;
                     }
                     _ => (),
                 }
             } else {
-                y_pos += 20;
+                SMALL_FONT
+                    .render(
+                        " ",
+                        Point::new(5, y_pos),
+                        VerticalPosition::Top,
+                        FontColor::WithBackground {
+                            bg: config::COLOR_BACKGROUND,
+                            fg: config::COLOR_BACKGROUND,
+                        },
+                        display,
+                    )
+                    .unwrap();
             }
+
+            y_pos += item_height;
         }
         self.last_position = self.position;
     }
@@ -147,7 +145,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
 
 impl MenuScreen<(), ()> {
     pub fn options_len() -> usize {
-        LABELS.len() - 1
+        LABELS.len()
     }
 }
 
