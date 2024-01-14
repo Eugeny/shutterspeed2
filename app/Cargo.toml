@@ -52,6 +52,7 @@ usbd-serial = "0.2.0"
 ouroboros = { version = "0.18.2", default-features = false }
 note_frequencies = "0.1.1"
 rtic-sync = "1.2.0"
+rotary-encoder-embedded = "0.2.0"
 
 [features]
 usb = []

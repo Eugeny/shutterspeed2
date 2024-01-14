@@ -198,6 +198,9 @@ pin_macro!($ measure_button_pin, a, pa2);
 pin_macro!($ usb_dm_pin, a, pa11);
 pin_macro!($ usb_dp_pin, a, pa12);
 
+pin_macro!($ rotary_dt_pin, c, pc14);
+pin_macro!($ rotary_clk_pin, c, pc15);
+
 use hal::adc::config::{Resolution, SampleTime};
 use hal::adc::Adc;
 use hal::dma::{PeripheralToMemory, Stream0, Transfer};

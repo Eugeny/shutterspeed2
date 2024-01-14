@@ -18,8 +18,8 @@ mod app {
 
     use app_measurements::{CalibrationState, CycleCounterClock, Measurement, RingBuffer};
     use app_ui::{
-        BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen,
-        Screens, StartScreen, UpdateScreen,
+        BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, MenuScreen, ResultsScreen,
+        Screen, Screens, StartScreen, UpdateScreen,
     };
     use config::{self as hw, hal, AllGpio};
     #[cfg(usb)]
@@ -36,10 +36,13 @@ mod app {
     use mipidsi::Error as MipidsiError;
     #[cfg(usb)]
     use ouroboros::self_referencing;
+    use rotary_encoder_embedded::standard::StandardMode;
+    use rotary_encoder_embedded::{Direction as EncoderDirection, RotaryEncoder};
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
     use rtic_sync::channel::{Receiver, Sender};
     use rtic_sync::make_channel;
+    use stm32f4xx_hal::dma::traits::Direction;
     #[cfg(usb)]
     use usb_device::class_prelude::UsbBusAllocator;
     #[cfg(usb)]
@@ -64,6 +67,7 @@ mod app {
         Results,
         Debug,
         Update,
+        Menu,
     }
 
     #[self_referencing]
@@ -129,6 +133,7 @@ mod app {
         display: UnsafeCell<DisplayType>,
         usb_devices: UsbDevicesImpl,
         beep_sender: Sender<'static, Chirp, 1>,
+        selected_menu_option: usize,
     }
 
     #[local]
@@ -139,6 +144,7 @@ mod app {
         measure_button_pin: ErasedPin<Input>,
         led_pin: ErasedPin<Output>,
         beeper: Beeper,
+        rotary: RotaryEncoder<StandardMode, ErasedPin<Input>, ErasedPin<Input>>,
     }
 
     #[cfg(usb)]
@@ -221,8 +227,6 @@ mod app {
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
-        display_task::spawn().unwrap();
-
         #[cfg(usb)]
         usb_task::spawn().unwrap();
         led_pin.set_low();
@@ -243,9 +247,19 @@ mod app {
         );
 
         let beeper = config::setup_sound_pwm!(dp, gpio, &clocks);
-        let (mut beep_tx, beep_rx) = make_channel!(Chirp, 1);
-
+        let (beep_tx, beep_rx) = make_channel!(Chirp, 1);
         beeper_task::spawn(beep_rx).unwrap();
+
+        let (rotary_tx, rotary_rx) = make_channel!(EncoderDirection, 100);
+
+        let rotary = RotaryEncoder::new(
+            hw::rotary_dt_pin!(gpio).into_pull_up_input().erase(),
+            hw::rotary_clk_pin!(gpio).into_pull_up_input().erase(),
+        )
+        .into_standard_mode();
+        rotary_encoder_task::spawn(rotary_tx).unwrap();
+
+        display_task::spawn(rotary_rx).unwrap();
 
         (
             Shared {
@@ -266,6 +280,7 @@ mod app {
                 #[cfg(not(usb))]
                 usb_devices: (),
                 beep_sender: beep_tx,
+                selected_menu_option: 0,
             },
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
@@ -274,8 +289,85 @@ mod app {
                 measure_button_pin: measure_button_pin.erase(),
                 led_pin: led_pin.erase(),
                 beeper,
+                rotary,
             },
         )
+    }
+
+    #[task(local=[rotary], shared=[app_mode, selected_menu_option], priority=2)]
+    async fn rotary_encoder_task(
+        mut cx: rotary_encoder_task::Context,
+        mut tx: Sender<'static, EncoderDirection, 100>,
+    ) {
+        fn step_back(shared: &mut rotary_encoder_task::SharedResources) {
+            (&mut shared.app_mode, &mut shared.selected_menu_option).lock(
+                |app_mode, selected_menu_option| match *app_mode {
+                    AppMode::Start | AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
+                        *app_mode = AppMode::Menu;
+                    }
+                    AppMode::Menu => {
+                        if *selected_menu_option == 0 {
+                            *app_mode = AppMode::Start;
+                        } else {
+                            *selected_menu_option -= 1;
+                        }
+                    }
+                    _ => (),
+                },
+            );
+        }
+        fn step_forward(shared: &mut rotary_encoder_task::SharedResources) {
+            (&mut shared.app_mode, &mut shared.selected_menu_option).lock(
+                |app_mode, selected_menu_option| match *app_mode {
+                    AppMode::Start | AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
+                        *app_mode = AppMode::Menu;
+                        *selected_menu_option = 0;
+                    }
+                    AppMode::Menu => {
+                        if *selected_menu_option == MenuScreen::options_len() - 1 {
+                            *app_mode = AppMode::Start;
+                        } else {
+                            *selected_menu_option += 1;
+                        }
+                    }
+                    _ => (),
+                },
+            );
+        }
+        let encoder = cx.local.rotary;
+        loop {
+            encoder.update();
+            match encoder.direction() {
+                EncoderDirection::None => (),
+                x => {
+                    let d: isize = match x {
+                        EncoderDirection::Anticlockwise => 1,
+                        EncoderDirection::Clockwise => -1,
+                        _ => 0,
+                    };
+
+                    (&mut cx.shared.app_mode, &mut cx.shared.selected_menu_option).lock(
+                        |app_mode, selected_menu_option| match *app_mode {
+                            AppMode::Start
+                            | AppMode::Calibrating
+                            | AppMode::Measure
+                            | AppMode::Debug => {
+                                *app_mode = AppMode::Menu;
+                            }
+                            AppMode::Menu => {
+                                *selected_menu_option = (*selected_menu_option as isize
+                                    + MenuScreen::options_len() as isize
+                                    + d)
+                                    as usize
+                                    % MenuScreen::options_len();
+                            }
+                            _ => (),
+                        },
+                    );
+                }
+            }
+            Systick::delay(10.millis()).await;
+        }
     }
 
     #[task(local=[beeper], priority=5)]
@@ -299,7 +391,7 @@ mod app {
                     beeper.play(20, 100).await;
                 }
                 Chirp::Done => {
-                    beeper.play(12-2, 100).await;
+                    beeper.play(12 - 2, 100).await;
                     beeper.play(24 - 2, 100).await;
                 }
             }
@@ -340,16 +432,40 @@ mod app {
     }
 
     // HWCONFIG
-    #[task(binds = EXTI2, shared = [app_mode, beep_sender], local=[measure_button_pin, led_pin], priority = 4)]
+    #[task(binds = EXTI2, shared = [app_mode, beep_sender, selected_menu_option], local=[measure_button_pin, led_pin], priority = 4)]
     fn measure_button_press(mut cx: measure_button_press::Context) {
         cx.shared.beep_sender.lock(|beep_sender| {
             let _ = beep_sender.try_send(Chirp::Button);
         });
-        cx.local.led_pin.toggle();
-        cx.shared.app_mode.lock(|app_mode| {
-            *app_mode = AppMode::Start;
+        let selected_option = cx
+            .shared
+            .selected_menu_option
+            .lock(|selected_menu_option| *selected_menu_option);
+        cx.shared.app_mode.lock(|app_mode| match *app_mode {
+            AppMode::Menu => match selected_option {
+                0 => {
+                    *app_mode = AppMode::Start;
+                }
+                1 => {
+                    *app_mode = AppMode::Debug;
+                }
+                2 => {
+                }
+                3 => {
+                    *app_mode = AppMode::Update;
+                }
+                _ => (),
+            },
+            AppMode::Calibrating | AppMode::Measure => {
+                *app_mode = AppMode::Start;
+            }
+            AppMode::Update => {
+
+            }
+                _ => {
+                let _ = measure_task::spawn();
+            }
         });
-        let _ = measure_task::spawn();
         cx.local.measure_button_pin.clear_interrupt_pending_bit();
     }
 
@@ -493,8 +609,11 @@ mod app {
         }
     }
 
-    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display, beep_sender], priority=1)]
-    async fn display_task(mut cx: display_task::Context) {
+    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display, beep_sender, selected_menu_option], priority=1)]
+    async fn display_task(
+        mut cx: display_task::Context,
+        encoder_rx: Receiver<'static, EncoderDirection, 100>,
+    ) {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
 
@@ -563,16 +682,25 @@ mod app {
                     AppMode::Update => {
                         screen = Screens::Update(UpdateScreen::default());
                     }
+                    AppMode::Menu => {
+                        screen = Screens::Menu(MenuScreen::default());
+                    }
                     AppMode::None => (),
                 };
                 screen.draw_init(display).await;
             }
 
-            #[allow(clippy::single_match)]
             match screen {
                 Screens::Debug(ref mut screen) => {
                     let adc_value = cx.shared.adc_value.lock(|adc_value| *adc_value);
                     screen.step(adc_value);
+                }
+                Screens::Menu(ref mut screen) => {
+                    let selected_menu_option = cx
+                        .shared
+                        .selected_menu_option
+                        .lock(|selected_menu_option| *selected_menu_option);
+                    screen.position = selected_menu_option;
                 }
                 _ => (),
             }
@@ -589,7 +717,7 @@ mod app {
             let deadline = if matches!(screen, Screens::Debug(_)) {
                 Systick::now() + 5.millis()
             } else {
-                now + 25.millis()
+                now + 250.millis()
             };
             Systick::delay_until(deadline).await;
         }

@@ -1,7 +1,8 @@
 use core::fmt::Debug;
 
-use embedded_graphics::geometry::Point;
+use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
+use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::Screen;
@@ -15,7 +16,7 @@ pub struct MenuScreen<DT, E> {
     _phantom: core::marker::PhantomData<(DT, E)>,
 }
 
-const LABELS: [&str; 4] = [" MEASURE ", " DEBUG ", " SENSITIVITY ", " UPDATE "];
+const LABELS: [&str; 5] = [" MEASURE ", " DEBUG ", " SENSITIVITY ", " UPDATE ", ""];
 const SENSITIVITY_LABELS: [&str; 3] = [" LO ", " MED ", " HI "];
 
 impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
@@ -45,28 +46,34 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
     async fn draw_frame(&mut self, display: &mut DT) {
         let bg = config::COLOR_BACKGROUND;
         let fg = config::COLOR_RESULT_VALUE;
+        let width = display.bounding_box().size.width;
 
         let mut y_pos = 20;
         let should_draw = self.last_position != self.position;
 
-        if should_draw {
-            self.draw_init(display).await;
-        }
-
         for (index, label) in LABELS.iter().enumerate() {
-            SMALL_FONT
-                .render(
-                    *label,
-                    Point::new(10, y_pos),
-                    VerticalPosition::Top,
-                    if index == self.position {
-                        FontColor::WithBackground { fg, bg }
-                    } else {
-                        FontColor::WithBackground { fg: bg, bg: fg }
-                    },
-                    display,
-                )
-                .unwrap();
+            if should_draw {
+                display
+                    .fill_solid(
+                        &Rectangle::new(Point::new(10, y_pos), Size::new(width - 10, 40)),
+                        config::COLOR_BACKGROUND,
+                    )
+                    .unwrap();
+
+                SMALL_FONT
+                    .render(
+                        *label,
+                        Point::new(10, y_pos),
+                        VerticalPosition::Top,
+                        if index == self.position {
+                            FontColor::WithBackground { fg, bg }
+                        } else {
+                            FontColor::WithBackground { fg: bg, bg: fg }
+                        },
+                        display,
+                    )
+                    .unwrap();
+            }
 
             if index == self.position {
                 y_pos += 40;
@@ -140,7 +147,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
 
 impl MenuScreen<(), ()> {
     pub fn options_len() -> usize {
-        LABELS.len()
+        LABELS.len() - 1
     }
 }
 
