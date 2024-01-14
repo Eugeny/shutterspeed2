@@ -7,8 +7,11 @@
 
 mod display;
 mod panic;
+mod sound;
 
-config::rtic_app!({
+// HWCONFIG
+#[rtic::app(device = hal::pac, dispatchers = [SPI2, SPI3, SPI4])]
+mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
     use core::panic;
@@ -35,6 +38,8 @@ config::rtic_app!({
     use ouroboros::self_referencing;
     use rtic_monotonics::systick::Systick;
     use rtic_monotonics::{create_systick_token, Monotonic};
+    use rtic_sync::channel::{Receiver, Sender};
+    use rtic_sync::make_channel;
     #[cfg(usb)]
     use usb_device::class_prelude::UsbBusAllocator;
     #[cfg(usb)]
@@ -44,8 +49,11 @@ config::rtic_app!({
 
     use crate::display::Display;
     use crate::panic::set_panic_display_ref;
+    use crate::sound::{BeeperExt, Chirp};
 
     pub type DisplayType = Display<config::DisplaySpiType>;
+
+    config::beeper_type!();
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum AppMode {
@@ -120,6 +128,7 @@ config::rtic_app!({
         measurement: Measurement<'static, CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
         usb_devices: UsbDevicesImpl,
+        beep_sender: Sender<'static, Chirp, 1>,
     }
 
     #[local]
@@ -129,6 +138,7 @@ config::rtic_app!({
         mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
         led_pin: ErasedPin<Output>,
+        beeper: Beeper,
     }
 
     #[cfg(usb)]
@@ -212,6 +222,7 @@ config::rtic_app!({
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
         display_task::spawn().unwrap();
+
         #[cfg(usb)]
         usb_task::spawn().unwrap();
         led_pin.set_low();
@@ -231,6 +242,11 @@ config::rtic_app!({
             unsafe { &mut USB_EP_MEMORY },
         );
 
+        let beeper = config::setup_sound_pwm!(dp, gpio, &clocks);
+        let (mut beep_tx, beep_rx) = make_channel!(Chirp, 1);
+
+        beeper_task::spawn(beep_rx).unwrap();
+
         (
             Shared {
                 transfer,
@@ -249,6 +265,7 @@ config::rtic_app!({
                 usb_devices: UsbDevices::make(usb_bus),
                 #[cfg(not(usb))]
                 usb_devices: (),
+                beep_sender: beep_tx,
             },
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
@@ -256,8 +273,37 @@ config::rtic_app!({
                 mode_button_pin: mode_button_pin.erase(),
                 measure_button_pin: measure_button_pin.erase(),
                 led_pin: led_pin.erase(),
+                beeper,
             },
         )
+    }
+
+    #[task(local=[beeper], priority=5)]
+    async fn beeper_task(cx: beeper_task::Context, mut beep_rx: Receiver<'static, Chirp, 1>) {
+        let beeper = cx.local.beeper;
+        while let Ok(chirp) = beep_rx.recv().await {
+            match chirp {
+                Chirp::Startup => {
+                    // Remember
+                    beeper.play(12 + -2, 250).await;
+                    beeper.play(12 + 5, 250).await;
+                    beeper.play(12 + 9, 250).await;
+                    Systick::delay(2000.millis()).await;
+                }
+                Chirp::Button => {
+                    beeper.note(9);
+                    Systick::delay(50.millis()).await;
+                    beeper.disable();
+                }
+                Chirp::Measuring => {
+                    beeper.play(20, 100).await;
+                }
+                Chirp::Done => {
+                    beeper.play(12-2, 100).await;
+                    beeper.play(24 - 2, 100).await;
+                }
+            }
+        }
     }
 
     // HWCONFIG
@@ -272,8 +318,11 @@ config::rtic_app!({
     }
 
     // HWCONFIG
-    #[task(binds = EXTI1, shared = [app_mode], local=[mode_button_pin], priority = 4)]
+    #[task(binds = EXTI1, shared = [app_mode, beep_sender], local=[mode_button_pin], priority = 4)]
     fn mode_button_press(mut cx: mode_button_press::Context) {
+        cx.shared.beep_sender.lock(|beep_sender| {
+            let _ = beep_sender.try_send(Chirp::Button);
+        });
         cx.shared.app_mode.lock(|app_mode| match app_mode {
             // _ => {
             //     *app_mode = AppMode::Update;
@@ -291,8 +340,11 @@ config::rtic_app!({
     }
 
     // HWCONFIG
-    #[task(binds = EXTI2, shared = [app_mode], local=[measure_button_pin, led_pin], priority = 4)]
+    #[task(binds = EXTI2, shared = [app_mode, beep_sender], local=[measure_button_pin, led_pin], priority = 4)]
     fn measure_button_press(mut cx: measure_button_press::Context) {
+        cx.shared.beep_sender.lock(|beep_sender| {
+            let _ = beep_sender.try_send(Chirp::Button);
+        });
         cx.local.led_pin.toggle();
         cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Start;
@@ -303,9 +355,9 @@ config::rtic_app!({
 
     // HWCONFIG
     #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [adc_dma_buffer], priority = 3)]
-    fn dma(ctx: dma::Context) {
-        let mut shared = ctx.shared;
-        let local = ctx.local;
+    fn dma(cx: dma::Context) {
+        let mut shared = cx.shared;
+        let local = cx.local;
 
         let last_adc_dma_buffer = shared.transfer.lock(|transfer| {
             let (last_adc_dma_buffer, _) = transfer
@@ -337,19 +389,23 @@ config::rtic_app!({
             );
     }
 
-    #[task(shared=[app_mode, adc_value, calibration_state, measurement], priority=2)]
-    async fn measure_task(mut ctx: measure_task::Context) {
-        ctx.shared.app_mode.lock(|app_mode| {
+    #[task(shared=[app_mode, adc_value, calibration_state, measurement, beep_sender], priority=2)]
+    async fn measure_task(mut cx: measure_task::Context) {
+        cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
-        ctx.shared.calibration_state.lock(|calibration_state| {
+        cx.shared.calibration_state.lock(|calibration_state| {
             calibration_state.begin();
         });
 
         Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
 
-        let calibration_value = ctx.shared.calibration_state.lock(|state| state.finish());
-        ctx.shared.measurement.lock(|measurement| {
+        cx.shared.beep_sender.lock(|beep_sender| {
+            let _ = beep_sender.try_send(Chirp::Measuring);
+        });
+
+        let calibration_value = cx.shared.calibration_state.lock(|state| state.finish());
+        cx.shared.measurement.lock(|measurement| {
             *measurement = Measurement::new(
                 calibration_value,
                 unsafe { &mut MEASUREMENT_BUFFER },
@@ -358,17 +414,17 @@ config::rtic_app!({
             );
         });
 
-        ctx.shared.app_mode.lock(|app_mode| {
+        cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Measure;
         });
 
         loop {
-            if ctx.shared.app_mode.lock(|app_mode| *app_mode) != AppMode::Measure {
+            if cx.shared.app_mode.lock(|app_mode| *app_mode) != AppMode::Measure {
                 // Cancelled
                 return;
             }
 
-            if ctx
+            if cx
                 .shared
                 .measurement
                 .lock(|measurement| measurement.is_done())
@@ -379,23 +435,26 @@ config::rtic_app!({
             Systick::delay(100.millis()).await;
         }
 
-        ctx.shared.app_mode.lock(|app_mode| {
+        cx.shared.beep_sender.lock(|beep_sender| {
+            let _ = beep_sender.try_send(Chirp::Done);
+        });
+        cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Results;
         });
     }
 
     #[task(shared=[app_mode, calibration_state], priority=2)]
-    async fn debug_task(mut ctx: debug_task::Context) {
-        ctx.shared.app_mode.lock(|app_mode| {
+    async fn debug_task(mut cx: debug_task::Context) {
+        cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
-        ctx.shared.calibration_state.lock(|calibration_state| {
+        cx.shared.calibration_state.lock(|calibration_state| {
             calibration_state.begin();
         });
 
         Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
 
-        ctx.shared.app_mode.lock(|app_mode| {
+        cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Debug;
         });
     }
@@ -434,12 +493,16 @@ config::rtic_app!({
         }
     }
 
-    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display], priority=1)]
+    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display, beep_sender], priority=1)]
     async fn display_task(mut cx: display_task::Context) {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
 
         BootScreen::default().draw_init(display).await;
+
+        cx.shared.beep_sender.lock(|beep_sender| {
+            let _ = beep_sender.try_send(Chirp::Startup);
+        });
 
         let mut mode = AppMode::None;
         let mut screen: Screens<DisplayType, MipidsiError> = StartScreen::default().into();
@@ -552,4 +615,4 @@ config::rtic_app!({
     fn usage_fault(_cx: usage_fault::Context) {
         panic!("UsageFault");
     }
-});
+}

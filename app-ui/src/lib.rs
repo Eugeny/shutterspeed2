@@ -3,24 +3,23 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-mod badge;
-mod chart;
 mod config;
+mod elements;
 mod fonts;
 mod format;
+mod fx;
 pub mod panic;
 mod primitives;
-mod ruler;
 mod screens;
-mod fx;
 
+pub use elements::*;
 pub use screens::{
-    BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, ResultsScreen, Screen, Screens,
-    StartScreen, UpdateScreen,
+    BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, MenuScreen, ResultsScreen,
+    Screen, Screens, StartScreen, UpdateScreen,
 };
 
 pub trait AppDrawTarget<E>: DrawTarget<Color = Rgb565, Error = E> {}
 impl<E, D: DrawTarget<Color = Rgb565, Error = E>> AppDrawTarget<E> for D {}
 
 pub use badge::draw_badge;
-pub use fx::{FX,FXParams};
+pub use fx::{FXParams, FX};

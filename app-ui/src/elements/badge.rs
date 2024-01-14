@@ -30,7 +30,7 @@ pub async fn draw_badge<D: AppDrawTarget<E>, E: Debug>(
         .unwrap();
 
     #[cfg(feature = "cortex-m")]
-    Systick::delay(100.millis()).await;
+    Systick::delay(50.millis()).await;
 
     SMALL_FONT
         .render_aligned(

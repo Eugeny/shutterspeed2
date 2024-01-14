@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use app_measurements::{CalibrationState, MeasurementResult};
 use app_ui::{
-    BootScreen, CalibrationScreen, FXParams, MeasurementScreen, ResultsScreen, Screen, Screens,
-    StartScreen, UpdateScreen, FX,
+    BootScreen, CalibrationScreen, FXParams, MeasurementScreen, MenuScreen, ResultsScreen, Screen,
+    Screens, StartScreen, UpdateScreen, FX,
 };
 use embedded_graphics::geometry::Size;
 use embedded_graphics_simulator::sdl2::Keycode;
@@ -37,45 +37,73 @@ async fn main() {
                 SimulatorEvent::Quit => {
                     break 'outer;
                 }
-                SimulatorEvent::KeyUp { keycode, .. } => {
-                    match keycode {
-                        Keycode::Q => screen = StartScreen::default().into(),
-                        Keycode::W => screen = CalibrationScreen::default().into(),
-                        Keycode::E => screen = MeasurementScreen::default().into(),
-                        Keycode::R => {
-                            let mut sample_buffer = HistoryBuffer::new();
-                            let size = sample_buffer.capacity();
-                            let margin = 100;
-                            let baseline = 127;
-
-                            for _ in 0..margin {
-                                sample_buffer.write(baseline);
-                            }
-                            for i in 0..size - margin * 2 {
-                                sample_buffer.write(
-                                    ((i as f32 / 300.0 * PI).sin() * 128.0) as u16 + baseline,
-                                );
-                            }
-                            for _ in 0..margin {
-                                sample_buffer.write(baseline);
-                            }
-                            screen = ResultsScreen::new(
-                                CalibrationState::Done(128),
-                                MeasurementResult {
-                                    duration_micros: 125,
-                                    integrated_duration_micros: 1000000 / 53,
-                                    sample_buffer,
-                                    samples_since_end: margin + 30,
-                                    samples_since_start: size - margin - 30,
-                                },
-                            )
-                            .into()
-                        }
-                        Keycode::T => screen = UpdateScreen::default().into(),
-                        _ => (),
+                SimulatorEvent::KeyUp { keycode, .. } => match keycode {
+                    Keycode::Q => {
+                        screen = StartScreen::default().into();
+                        screen.draw_init(&mut display).await;
                     }
-                    screen.draw_init(&mut display).await;
-                }
+                    Keycode::W => {
+                        screen = CalibrationScreen::default().into();
+                        screen.draw_init(&mut display).await;
+                    }
+                    Keycode::E => {
+                        screen = MeasurementScreen::default().into();
+                        screen.draw_init(&mut display).await;
+                    }
+                    Keycode::R => {
+                        let mut sample_buffer = HistoryBuffer::new();
+                        let size = sample_buffer.capacity();
+                        let margin = 100;
+                        let baseline = 127;
+
+                        for _ in 0..margin {
+                            sample_buffer.write(baseline);
+                        }
+                        for i in 0..size - margin * 2 {
+                            sample_buffer
+                                .write(((i as f32 / 300.0 * PI).sin() * 128.0) as u16 + baseline);
+                        }
+                        for _ in 0..margin {
+                            sample_buffer.write(baseline);
+                        }
+                        screen = ResultsScreen::new(
+                            CalibrationState::Done(128),
+                            MeasurementResult {
+                                duration_micros: 125,
+                                integrated_duration_micros: 1000000 / 53,
+                                sample_buffer,
+                                samples_since_end: margin + 30,
+                                samples_since_start: size - margin - 30,
+                            },
+                        )
+                        .into();
+                        screen.draw_init(&mut display).await;
+                    }
+                    Keycode::T => {
+                        screen = UpdateScreen::default().into();
+                        screen.draw_init(&mut display).await;
+                    }
+                    Keycode::Y => {
+                        screen = MenuScreen::default().into();
+                        screen.draw_init(&mut display).await;
+                    }
+                    Keycode::Up => {
+                        if let Screens::Menu(ref mut screen) = screen {
+                            screen.position = screen.position.saturating_sub(1);
+                        }
+                    }
+                    Keycode::Down => {
+                        if let Screens::Menu(ref mut screen) = screen {
+                            screen.position = (screen.position + 1) % MenuScreen::options_len();
+                        }
+                    }
+                    Keycode::Left | Keycode::Right => {
+                        if let Screens::Menu(ref mut screen) = screen {
+                            screen.sensitivity = (screen.sensitivity + 1) % 3;
+                        }
+                    }
+                    _ => (),
+                },
                 _ => (),
             }
         }

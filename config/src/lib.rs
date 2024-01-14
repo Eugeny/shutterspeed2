@@ -8,6 +8,7 @@ mod macros;
 // Timer allocation
 // TIM2 <-> ADC1
 // TIM3 -> display delay
+// TIM4 -> sound PWM
 
 pub const CALIBRATION_TIME_MS: u32 = 1000;
 pub const TRIGGER_THRESHOLD_LOW: f32 = 1.3;
@@ -124,6 +125,56 @@ macro_rules! setup_display_spi {
     }};
 }
 
+#[macro_export]
+macro_rules! beeper_type {
+    () => {
+        use embedded_time::rate::Hertz;
+        use fugit::ExtU32;
+        use hal::pac::TIM4;
+        use hal::timer::{ChannelBuilder, PwmHz};
+
+        pub struct Beeper {
+            pwm: PwmHz<TIM4, ChannelBuilder<TIM4, 2>>,
+        }
+
+        impl crate::sound::BeeperExt for Beeper {
+            fn enable(&mut self, frequency: f32) {
+                use hal::timer::Channel;
+
+                self.pwm.set_period((frequency as u32).Hz());
+                self.pwm.enable(Channel::C3);
+            }
+
+            fn disable(&mut self) {
+                use hal::timer::Channel;
+                self.pwm.disable(Channel::C3);
+            }
+
+            fn set_duty_percent(&mut self, duty_percent: u8) {
+                use hal::timer::Channel;
+                self.pwm.set_duty(
+                    Channel::C3,
+                    (self.pwm.get_max_duty() * duty_percent as u16) / 100,
+                );
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! setup_sound_pwm {
+    ($dp:expr, $gpio:expr, $clocks:expr) => {{
+        use hal::timer::Channel;
+
+        let mut buzzer_pin = $gpio.b.pb8.into_alternate();
+        let ch = hal::timer::pwm::Channel3::new(buzzer_pin);
+        let mut pwm = $dp.TIM4.pwm_hz(ch, 550.Hz(), $clocks);
+        pwm.set_duty(Channel::C3, pwm.get_max_duty() / 2);
+
+        Beeper { pwm }
+    }};
+}
+
 pub struct AllGpio {
     pub a: hal::gpio::gpioa::Parts,
     pub b: hal::gpio::gpiob::Parts,
@@ -146,16 +197,6 @@ pin_macro!($ measure_button_pin, a, pa2);
 
 pin_macro!($ usb_dm_pin, a, pa11);
 pin_macro!($ usb_dp_pin, a, pa12);
-
-#[macro_export]
-macro_rules! rtic_app {
-    ({ $($module:item)* }) => {
-        #[rtic::app(device = hal::pac, dispatchers = [SPI2, SPI3, SPI4])]
-        mod app {
-            $($module)*
-        }
-    };
-}
 
 use hal::adc::config::{Resolution, SampleTime};
 use hal::adc::Adc;

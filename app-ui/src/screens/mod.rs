@@ -2,6 +2,7 @@ mod boot;
 mod calibration;
 mod debug;
 mod measurement;
+mod menu;
 mod results;
 mod start;
 mod update;
@@ -13,6 +14,7 @@ pub use calibration::CalibrationScreen;
 pub use debug::DebugScreen;
 use enum_dispatch::enum_dispatch;
 pub use measurement::MeasurementScreen;
+pub use menu::MenuScreen;
 pub use results::ResultsScreen;
 pub use start::StartScreen;
 pub use update::UpdateScreen;
@@ -36,4 +38,5 @@ pub enum Screens<DT: AppDrawTarget<E>, E: Debug> {
     Debug(DebugScreen<DT, E>),
     Results(ResultsScreen<DT, E>),
     Update(UpdateScreen<DT, E>),
+    Menu(MenuScreen<DT, E>),
 }

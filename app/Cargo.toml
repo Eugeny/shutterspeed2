@@ -25,6 +25,7 @@ cortex-m-semihosting.workspace = true
 embedded-hal.workspace = true
 stm32f4xx-hal.workspace = true
 
+micromath.workspace = true
 embedded-graphics.workspace = true
 heapless.workspace = true
 u8g2-fonts.workspace = true
@@ -49,6 +50,8 @@ enum_dispatch.workspace = true
 usb-device = "0.3.0"
 usbd-serial = "0.2.0"
 ouroboros = { version = "0.18.2", default-features = false }
+note_frequencies = "0.1.1"
+rtic-sync = "1.2.0"
 
 [features]
 usb = []

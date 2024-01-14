@@ -20,3 +20,5 @@ pub const COLOR_CHART_3: Rgb565 = Rgb565::RED;
 pub const COLOR_NEAREST_SPEED: Rgb565 = Rgb565::CYAN;
 
 pub const COLOR_RULER: Rgb565 = Rgb565::CSS_PALE_GREEN;
+
+pub const COLOR_MENU_ACTION: Rgb565 = Rgb565::CSS_PALE_GREEN;
