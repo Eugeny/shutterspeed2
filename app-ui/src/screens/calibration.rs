@@ -14,10 +14,9 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for CalibrationScreen<DT, E> 
     async fn draw_init(&mut self, display: &mut DT) {
         display.clear(Rgb565::BLACK).unwrap();
 
-        let origin = Point::new(display.bounding_box().size.width as i32 / 2, 100);
         draw_badge(
             display,
-            origin,
+            display.bounding_box().center() - Point::new(0, 30),
             " CALIBRATING ",
             Rgb565::BLACK,
             Rgb565::YELLOW,

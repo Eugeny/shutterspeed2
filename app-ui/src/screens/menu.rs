@@ -46,7 +46,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
         let fg = config::COLOR_RESULT_VALUE;
 
         let mut y_pos = 20;
-        let item_height = 50;
+        let item_height = 25;
         let should_draw = self.last_position != self.position;
 
         for (index, label) in LABELS.iter().enumerate() {
@@ -61,7 +61,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
                 SMALL_FONT
                     .render(
                         *label,
-                        Point::new(30, y_pos),
+                        Point::new(15, y_pos),
                         VerticalPosition::Top,
                         if index == self.position {
                             FontColor::WithBackground { fg, bg }

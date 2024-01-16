@@ -34,8 +34,7 @@ embedded-graphics-framebuf.workspace = true
 
 rtic-monotonics.workspace = true
 
-mipidsi = "0.7.1"
-display-interface-spi = "0.4.1"
+mipidsi.workspace = true
 embedded-time.workspace = true
 fugit.workspace = true
 ufmt.workspace = true

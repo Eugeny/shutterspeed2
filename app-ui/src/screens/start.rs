@@ -21,7 +21,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for StartScreen<DT, E> {
 
         draw_badge(
             display,
-            Point::new(display.bounding_box().size.width as i32 / 2, 100),
+            display.bounding_box().center() - Point::new(0, 30),
             " READY ",
             Rgb565::CSS_PALE_GREEN,
             Rgb565::BLACK,
@@ -42,7 +42,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for StartScreen<DT, E> {
         let center = display.bounding_box().center();
         display
             .fill_solid(
-                &Rectangle::with_center(center + Point::new(0, 40), Size::new(10, 10)),
+                &Rectangle::with_center(center + Point::new(0, 10), Size::new(10, 10)),
                 color,
             )
             .unwrap();

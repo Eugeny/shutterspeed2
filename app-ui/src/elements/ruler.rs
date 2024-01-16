@@ -19,9 +19,9 @@ pub fn draw_speed_ruler<D: AppDrawTarget<E>, E: Debug>(
     actual_duration_secs: f32,
 ) {
     let width = display.bounding_box().size.width;
-    let ruler_height = 10;
+    let ruler_height = 5;
 
-    let duration_to_x_offset = |d: f32| ((1.0 / d).log2() * 50.0) as i32;
+    let duration_to_x_offset = |d: f32| ((1.0 / d).log2() * 30.0) as i32;
 
     let actual_x = origin.x + duration_to_x_offset(actual_duration_secs);
 
@@ -89,7 +89,7 @@ pub fn draw_speed_ruler<D: AppDrawTarget<E>, E: Debug>(
             .unwrap();
         let label_origin = Point::new(
             x - label_size.bounding_box.unwrap().size.width as i32 / 2,
-            if bottom { y + 8 } else { y - ruler_height - 20 },
+            if bottom { y + 3 } else { y - ruler_height - 11 },
         );
 
         let label_off_screen = label_origin.x + label_size.bounding_box.unwrap().size.width as i32
@@ -104,11 +104,11 @@ pub fn draw_speed_ruler<D: AppDrawTarget<E>, E: Debug>(
                             + if bottom {
                                 Point::zero()
                             } else {
-                                Point::new(0, -4)
+                                Point::new(0, -1)
                             },
                         Size::new(
-                            3,
-                            ruler_height as u32 + if label_off_screen { 0 } else { 5 },
+                            2,
+                            ruler_height as u32 + if label_off_screen { 0 } else { 2 },
                         ),
                     ),
                     color,

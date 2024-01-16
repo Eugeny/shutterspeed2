@@ -5,7 +5,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 
 mod config;
 mod elements;
-mod fonts;
+pub mod fonts;
 mod format;
 mod fx;
 pub mod panic;

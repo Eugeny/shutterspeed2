@@ -7,7 +7,7 @@ use embedded_text::TextBox;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::U8g2TextStyle;
 
-use crate::fonts::{TinyFont, SMALL_FONT, TINY_FONT};
+use crate::fonts::{TinierFont, SMALL_FONT, TINY_FONT};
 use crate::primitives::Cross;
 use crate::AppDrawTarget;
 
@@ -19,12 +19,12 @@ pub fn draw_panic_screen<D: AppDrawTarget<E>, E>(display: &mut D, message: &str)
 
     for d in [-1, 0, 1] {
         let _ =
-            Cross::new(Point::new(width as i32 / 2 + d * 40, 50), 15, Rgb565::BLACK).draw(display);
+            Cross::new(Point::new(width as i32 / 2 + d * 20, 15), 7, Rgb565::BLACK).draw(display);
     }
 
     let _ = TINY_FONT.render_aligned(
         env!("CARGO_PKG_VERSION"),
-        Point::new(width as i32 / 2, 80),
+        Point::new(width as i32 / 2, 30),
         VerticalPosition::Top,
         HorizontalAlignment::Center,
         FontColor::WithBackground {
@@ -36,7 +36,7 @@ pub fn draw_panic_screen<D: AppDrawTarget<E>, E>(display: &mut D, message: &str)
 
     let _ = SMALL_FONT.render_aligned(
         " FATAL ERROR ",
-        Point::new(width as i32 / 2, 100),
+        Point::new(width as i32 / 2, 45),
         VerticalPosition::Top,
         HorizontalAlignment::Center,
         FontColor::WithBackground {
@@ -46,14 +46,15 @@ pub fn draw_panic_screen<D: AppDrawTarget<E>, E>(display: &mut D, message: &str)
         display,
     );
 
-    let character_style = U8g2TextStyle::new(TinyFont {}, Rgb565::BLACK);
+    let character_style = U8g2TextStyle::new(TinierFont {}, Rgb565::BLACK);
 
     let textbox_style = TextBoxStyleBuilder::new()
         .height_mode(HeightMode::FitToText)
+        .paragraph_spacing(1)
         .alignment(embedded_text::alignment::HorizontalAlignment::Center)
         .build();
 
-    let origin = Point::new(10, 150);
+    let origin = Point::new(10, 70);
     let _ = TextBox::with_textbox_style(
         message,
         Rectangle::new(origin, Size::new(width - 20, height - origin.y as u32)),

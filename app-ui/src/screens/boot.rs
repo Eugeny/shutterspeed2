@@ -22,7 +22,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for BootScreen<DT, E> {
         let height = display.bounding_box().size.height;
         let y = (height / 2) as i32;
 
-        Cross::new(Point::new(x, y + 10), 20, Rgb565::RED)
+        Cross::new(Point::new(x, y + 5), 10, Rgb565::RED)
             .draw(display)
             .unwrap();
         draw_badge(
@@ -41,7 +41,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for BootScreen<DT, E> {
             Rgb565::BLACK,
         )
         .await;
-        Cross::new(Point::new(x, y + 10), 30, Rgb565::WHITE)
+        Cross::new(Point::new(x, y + 5), 15, Rgb565::WHITE)
             .draw(display)
             .unwrap();
         draw_badge(

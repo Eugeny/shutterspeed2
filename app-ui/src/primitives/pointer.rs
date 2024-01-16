@@ -16,7 +16,7 @@ impl Pointer {
     pub fn new(origin: Point, size: i32, upside_down: bool, color: Rgb565) -> Self {
         let style = PrimitiveStyleBuilder::new()
             .stroke_alignment(StrokeAlignment::Inside)
-            .stroke_width(3)
+            .stroke_width(2)
             .stroke_color(color)
             .build();
         let sy = if upside_down { -1 } else { 1 };

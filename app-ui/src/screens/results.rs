@@ -13,9 +13,8 @@ use ufmt::uwrite;
 
 use super::Screen;
 use crate::chart::draw_chart;
-use crate::fonts::TINY_FONT;
+use crate::fonts::{ALT_FONT, TINY_FONT};
 use crate::format::write_fraction;
-use crate::primitives::Pointer;
 use crate::ruler::draw_speed_ruler;
 use crate::{config as cfg, AppDrawTarget};
 
@@ -42,15 +41,15 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
 
         draw_speed_ruler(
             display,
-            Point::new(0, 290),
+            Point::new(0, 145),
             self.result.integrated_duration_micros as f32 / 1_000_000.0,
         );
     }
 
     async fn draw_frame(&mut self, display: &mut DT) {
-        let ss_origin = Point::new(display.bounding_box().center().x, 100);
+        let ss_origin = Point::new(display.bounding_box().center().x, 50);
         self.draw_shutter_speed(display, ss_origin);
-        self.draw_deviation(display, ss_origin + Point::new(0, 130));
+        self.draw_deviation(display, ss_origin + Point::new(0, 60));
     }
 }
 
@@ -79,21 +78,21 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
         let is_inverse = duration_micros < 500_000;
 
         let small_style = SevenSegmentStyleBuilder::new()
-            .digit_size(Size::new(12, 23)) // digits are 10x20 pixels
-            .digit_spacing(5) // 5px spacing between digits
+            .digit_size(Size::new(8, 15)) // digits are 10x20 pixels
+            .digit_spacing(2) // 5px spacing between digits
             .segment_width(3) // 5px wide segments
             .inactive_segment_color(cfg::COLOR_RESULT_VALUE_INACTIVE)
             .segment_color(cfg::COLOR_RESULT_VALUE) // active segments are green
             .build();
         let large_style = SevenSegmentStyleBuilder::new()
-            .digit_size(Size::new(25, 45)) // digits are 10x20 pixels
-            .digit_spacing(5) // 5px spacing between digits
-            .segment_width(6) // 5px wide segments
+            .digit_size(Size::new(16, 28)) // digits are 10x20 pixels
+            .digit_spacing(2) // 5px spacing between digits
+            .segment_width(4) // 5px wide segments
             .inactive_segment_color(cfg::COLOR_RESULT_VALUE_INACTIVE)
             .segment_color(cfg::COLOR_RESULT_VALUE) // active segments are green
             .build();
 
-        let number_origin = origin + Point::new(0, 60);
+        let number_origin = origin + Point::new(0, 35);
         let end_point = Text::with_alignment(
             &micros_to_shutter_speed_str(duration_micros)[..],
             number_origin,
@@ -103,23 +102,23 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
         .draw(display)
         .unwrap();
 
-        Text::new("5", end_point + Point::new(10, 0), small_style)
+        Text::new("5", end_point + Point::new(5, 0), small_style)
             .draw(display)
             .unwrap();
 
         if is_inverse {
             let one_ends = Text::new(
                 "1",
-                number_origin * 2 - end_point + Point::new(-25, -20),
+                number_origin * 2 - end_point + Point::new(-15, -15),
                 small_style,
             )
             .draw(display)
             .unwrap();
 
-            Line::new(one_ends, one_ends + Point::new(7, -20))
+            Line::new(one_ends, one_ends + Point::new(5, -12))
                 .draw_styled(
                     &PrimitiveStyleBuilder::new()
-                        .stroke_width(2)
+                        .stroke_width(1)
                         .stroke_color(cfg::COLOR_RESULT_VALUE)
                         .build(),
                     display,
@@ -129,8 +128,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
 
         TINY_FONT
             .render_aligned(
-                " Shutter speed ",
-                origin + Point::new(0, -10),
+                " SHUTTER SPEED ",
+                origin + Point::new(0, -6),
                 VerticalPosition::Top,
                 u8g2_fonts::types::HorizontalAlignment::Center,
                 FontColor::WithBackground {
@@ -151,31 +150,17 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
             / best_match_duration
             * 100.0) as i16;
 
-        let color = if percent_offset.abs() < 15 {
-            cfg::COLOR_RESULT_GOOD
+        let (color, color_inactive) = if percent_offset.abs() < 15 {
+            (cfg::COLOR_RESULT_GOOD, cfg::COLOR_RESULT_GOOD_INACTIVE)
         } else if percent_offset.abs() < 30 {
-            cfg::COLOR_RESULT_FAIR
+            (cfg::COLOR_RESULT_FAIR, cfg::COLOR_RESULT_FAIR_INACTIVE)
         } else {
-            cfg::COLOR_RESULT_BAD
+            (cfg::COLOR_RESULT_BAD, cfg::COLOR_RESULT_BAD_INACTIVE)
         };
 
-        TINY_FONT
-            .render_aligned(
-                " Lag ",
-                origin + Point::new(0, -45),
-                VerticalPosition::Top,
-                u8g2_fonts::types::HorizontalAlignment::Center,
-                FontColor::WithBackground {
-                    bg: color,
-                    fg: cfg::COLOR_BACKGROUND,
-                },
-                display,
-            )
-            .unwrap();
-
         let small_style = SevenSegmentStyleBuilder::new()
-            .digit_size(Size::new(12, 23)) // digits are 10x20 pixels
-            .digit_spacing(5) // 5px spacing between digits
+            .digit_size(Size::new(10, 15)) // digits are 10x20 pixels
+            .digit_spacing(2) // 5px spacing between digits
             .segment_width(3) // 5px wide segments
             .inactive_segment_color(cfg::COLOR_RESULT_VALUE_INACTIVE)
             .segment_color(color) // active segments are green
@@ -193,37 +178,38 @@ impl<DT: AppDrawTarget<E>, E: Debug> ResultsScreen<DT, E> {
         .draw(display)
         .unwrap();
 
-        let percent_end_point = Text::with_alignment(
-            "°o",
-            end_point + Point::new(15, 0),
-            SevenSegmentStyleBuilder::from(&small_style)
-                .digit_spacing(3)
-                .build(),
-            embedded_graphics::text::Alignment::Center,
-        )
-        .draw(display)
-        .unwrap();
+        ALT_FONT
+            .render_aligned(
+                "%",
+                end_point + Point::new(6, 0),
+                VerticalPosition::Baseline,
+                u8g2_fonts::types::HorizontalAlignment::Center,
+                FontColor::WithBackground {
+                    fg: color,
+                    bg: cfg::COLOR_BACKGROUND,
+                },
+                display,
+            )
+            .unwrap();
 
-        Line::new(
-            percent_end_point + Point::new(-27, 0),
-            percent_end_point + Point::new(-7, -20),
-        )
-        .draw_styled(
-            &PrimitiveStyleBuilder::new()
-                .stroke_width(3)
-                .stroke_color(color)
-                .build(),
-            display,
-        )
-        .unwrap();
-
-        Pointer::new(
-            origin * 2 - end_point + Point::new(-10, if percent_offset > 0 { -15 } else { -5 }),
-            5,
-            percent_offset > 0,
-            cfg::COLOR_RESULT_VALUE,
-        )
-        .draw(display)
-        .unwrap();
+        for (sign, label, offset) in [
+            (-1, " FAST ", Point::new(3, 8)),
+            (1, " SLOW ", Point::new(3, -2)),
+        ] {
+            let active = percent_offset.abs() >= 15 && percent_offset.signum() == sign;
+            TINY_FONT
+                .render_aligned(
+                    label,
+                    origin * 2 - end_point - offset,
+                    VerticalPosition::Baseline,
+                    u8g2_fonts::types::HorizontalAlignment::Right,
+                    FontColor::WithBackground {
+                        bg: if active { color } else { color_inactive },
+                        fg: cfg::COLOR_BACKGROUND,
+                    },
+                    display,
+                )
+                .unwrap();
+        }
     }
 }

@@ -1,6 +1,6 @@
 #![no_std]
 
-pub use stm32f4xx_hal as hal;
+pub use {display_interface_spi, embedded_time, fugit, stm32f4xx_hal as hal};
 
 #[macro_use]
 mod macros;
@@ -16,7 +16,7 @@ pub const TRIGGER_THRESHOLD_HIGH: f32 = 1.5;
 pub const ADC_RESOLUTION: Resolution = Resolution::Eight;
 
 pub const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
-pub const SAMPLE_RATE_HZ: u32 = 50_000_u32;
+pub const SAMPLE_RATE_HZ: u32 = 100_000_u32;
 pub const SYSCLK: u32 = 84_000_000;
 pub const HCLK: u32 = 42_000_000;
 pub const SPI_FREQ_HZ: u32 = 35_000_000;
@@ -28,6 +28,7 @@ pub type AdcTimerType = CounterHz<TIM2>;
 #[macro_export]
 macro_rules! setup_clocks {
     ($dp:expr) => {{
+        use $crate::hal::prelude::*;
         let rcc = $dp.RCC.constrain();
         rcc.cfgr
             .sysclk($crate::SYSCLK.Hz())
@@ -43,7 +44,8 @@ macro_rules! setup_clocks {
 #[macro_export]
 macro_rules! setup_adc_timer {
     ($core:expr, $dp:expr, $clocks:expr) => {{
-        use hal::timer::Event;
+        use $crate::fugit::ExtU32;
+        use $crate::hal::timer::Event;
 
         let mut timer = $dp.TIM2.counter_hz($clocks);
         timer.listen(Event::Update);
@@ -106,7 +108,8 @@ macro_rules! delay_timer {
 #[macro_export]
 macro_rules! setup_display_spi {
     ($dp:expr, $gpio:expr, $clocks:expr) => {{
-        use hal::spi::Spi;
+        use $crate::fugit::RateExtU32;
+        use $crate::hal::spi::Spi;
 
         let mut sclk_pin = hw::display_sclk_pin!($gpio).into_alternate();
         let mut miso_pin = hw::display_miso_pin!($gpio).into_alternate();
@@ -126,12 +129,32 @@ macro_rules! setup_display_spi {
 }
 
 #[macro_export]
+macro_rules! setup_display {
+    ($dp:expr, $gpio:expr, $clocks:expr, $delay:expr) => {{
+        use $crate::display_interface_spi::SPIInterfaceNoCS;
+        use $crate::hal::gpio::{Edge, ErasedPin, Input, Output, Speed};
+        let spi = $crate::setup_display_spi!($dp, $gpio, $clocks);
+        let mut dc_pin = $crate::display_dc_pin!($gpio).into_push_pull_output();
+        let mut rst_pin = $crate::display_rst_pin!($gpio).into_push_pull_output();
+        dc_pin.set_speed(Speed::VeryHigh);
+        rst_pin.set_speed(Speed::VeryHigh);
+
+        let di = SPIInterfaceNoCS::new(spi, dc_pin.erase());
+        mipidsi::Builder::st7735s(di)
+            .with_orientation(mipidsi::Orientation::Portrait(false))
+            .with_invert_colors(mipidsi::ColorInversion::Normal)
+            .with_display_size(128, 160)
+            .init($delay, Some(rst_pin.erase()))
+    }};
+}
+
+#[macro_export]
 macro_rules! beeper_type {
     () => {
         use embedded_time::rate::Hertz;
-        use fugit::ExtU32;
-        use hal::pac::TIM4;
-        use hal::timer::{ChannelBuilder, PwmHz};
+        use $crate::fugit::ExtU32;
+        use $crate::hal::pac::TIM4;
+        use $crate::hal::timer::{ChannelBuilder, PwmHz};
 
         pub struct Beeper {
             pwm: PwmHz<TIM4, ChannelBuilder<TIM4, 2>>,
@@ -182,7 +205,7 @@ pub struct AllGpio {
 }
 
 pin_macro!($ display_dc_pin, a, pa8);
-pin_macro!($ display_rst_pin, a, pa10);
+pin_macro!($ display_rst_pin, b, pb5);
 pin_macro!($ display_sclk_pin, a, pa5);
 pin_macro!($ display_miso_pin, a, pa6);
 pin_macro!($ display_mosi_pin, a, pa7);

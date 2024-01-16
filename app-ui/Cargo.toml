@@ -36,4 +36,4 @@ eg-seven-segment = "0.2.0"
 
 
 [features]
-cortex-m = ["rtic-monotonics"]
+cortex-m = ["rtic-monotonics", "app-measurements/cortex-m"]

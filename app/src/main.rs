@@ -27,7 +27,7 @@ mod app {
     use cortex_m_microclock::CYCCNTClock;
     use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
     use hal::adc::config::Resolution;
-    use hal::gpio::{Edge, ErasedPin, Input, Output, Speed};
+    use hal::gpio::{Edge, ErasedPin, Input, Output};
     #[cfg(usb)]
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
     use hal::pac::{self, Interrupt};
@@ -197,19 +197,9 @@ mod app {
         let mut delay = config::delay_timer!(dp).delay_us(&clocks);
 
         let mut display = {
-            let mut dc_pin = hw::display_dc_pin!(gpio).into_push_pull_output();
-            let mut rst_pin = hw::display_rst_pin!(gpio).into_push_pull_output();
-
-            dc_pin.set_speed(Speed::VeryHigh);
-            rst_pin.set_speed(Speed::VeryHigh);
-            let spi = config::setup_display_spi!(dp, gpio, &clocks);
-
             Display::new(
-                spi,
-                dc_pin.erase(),
-                rst_pin.erase(),
+                hw::setup_display!(dp, gpio, &clocks, &mut delay).unwrap(),
                 backlight_pin.erase(),
-                &mut delay,
             )
         };
 
@@ -325,7 +315,7 @@ mod app {
                     );
                 }
             }
-            Systick::delay(10.millis()).await;
+            Systick::delay(1.millis()).await;
         }
     }
 
@@ -415,9 +405,10 @@ mod app {
                 }
                 _ => (),
             },
-            AppMode::Calibrating | AppMode::Measure => {
+            AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
                 *app_mode = AppMode::Start;
             }
+            AppMode::Update => (),
             _ => {
                 let _ = measure_task::spawn();
             }
@@ -670,7 +661,7 @@ mod app {
             let deadline = if matches!(screen, Screens::Debug(_)) {
                 Systick::now() + 5.millis()
             } else {
-                now + 250.millis()
+                now + 25.millis()
             };
             Systick::delay_until(deadline).await;
         }

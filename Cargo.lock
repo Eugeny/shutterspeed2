@@ -20,7 +20,6 @@ dependencies = [
  "cortex-m-microclock",
  "cortex-m-rt",
  "cortex-m-semihosting",
- "display-interface-spi",
  "embedded-alloc",
  "embedded-graphics",
  "embedded-graphics-framebuf",
@@ -128,12 +127,18 @@ name = "bootloader"
 version = "0.1.0"
 dependencies = [
  "bootloader-api",
+ "config",
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-semihosting",
+ "embedded-graphics",
  "embedded-hal 0.2.7",
- "panic-halt",
+ "embedded-text",
+ "fugit",
+ "mipidsi",
+ "panic-abort",
  "stm32f4xx-hal",
+ "u8g2-fonts",
 ]
 
 [[package]]
@@ -169,6 +174,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "config"
 version = "0.1.0"
 dependencies = [
+ "display-interface-spi",
+ "embedded-time",
+ "fugit",
  "stm32f4xx-hal",
 ]
 
@@ -729,10 +737,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "panic-halt"
-version = "0.2.0"
+name = "panic-abort"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de96540e0ebde571dc55c73d60ef407c653844e6f9a1e2fdbd40c07b9252d812"
+checksum = "4e20e6499bbbc412f280b04a42346b356c6fa0753d5fd22b7bd752ff34c778ee"
 
 [[package]]
 name = "pin-project-lite"

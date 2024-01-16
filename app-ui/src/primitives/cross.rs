@@ -13,7 +13,7 @@ pub struct Cross {
 
 impl Cross {
     pub fn new(origin: Point, size: i32, color: Rgb565) -> Self {
-        let style = PrimitiveStyle::with_stroke(color, 4);
+        let style = PrimitiveStyle::with_stroke(color, 2);
 
         Self {
             line1: Line::new(

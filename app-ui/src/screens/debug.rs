@@ -48,10 +48,10 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
 
         // draw_chart(display, &self.state.adc_history, 10, None, None, true);
 
-        let ll_origin = Point::new(15, 20);
+        let ll_origin = Point::new(5, 5);
         self.draw_light_value(display, ll_origin, avg_adc_value);
 
-        let bar_origin = ll_origin + Point::new(0, 90);
+        let bar_origin = ll_origin + Point::new(0, 40);
         self.draw_bar(
             display,
             bar_origin,
@@ -60,7 +60,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
             max_adc_value,
         );
 
-        let calibration_origin = bar_origin + Point::new(0, 60);
+        let calibration_origin = bar_origin + Point::new(0, 30);
         self.draw_value(
             display,
             calibration_origin,
@@ -70,8 +70,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
         );
 
         Pointer::new(
-            calibration_origin + Point::new(180, 5),
-            20,
+            calibration_origin + Point::new(90, 5),
+            10,
             true,
             if self.is_triggered {
                 cfg::COLOR_TRIGGER_HIGH
@@ -82,13 +82,13 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
         .draw(display)
         .unwrap();
 
-        let noise_origin = calibration_origin + Point::new(0, 65);
+        let noise_origin = calibration_origin + Point::new(0, 33);
         let noise = (max_adc_value - min_adc_value) / 2;
         self.draw_value(display, noise_origin, " NOISE ", noise, cfg::COLOR_NOISE);
 
         self.draw_value(
             display,
-            noise_origin + Point::new(150, 0),
+            noise_origin + Point::new(79, 0),
             " TRIG H ",
             self.threshold_high,
             cfg::COLOR_TRIGGER_HIGH,
@@ -96,7 +96,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
 
         self.draw_value(
             display,
-            noise_origin + Point::new(70, 0),
+            noise_origin + Point::new(37, 0),
             " TRIG L ",
             self.threshold_low,
             cfg::COLOR_TRIGGER_LOW,
@@ -159,7 +159,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
         LARGE_DIGIT_FONT
             .render(
                 &s[..],
-                origin + Point::new(1, 15),
+                origin + Point::new(1, 8),
                 VerticalPosition::Top,
                 FontColor::WithBackground {
                     fg: Rgb565::WHITE,
@@ -178,8 +178,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
         min_adc_value: u16,
         max_adc_value: u16,
     ) {
-        const WIDTH: usize = 200;
-        const HEIGHT: usize = 40;
+        const WIDTH: usize = 118;
+        const HEIGHT: usize = 30;
 
         let mut buffer_data = [Rgb565::BLACK; WIDTH * HEIGHT];
         let mut buffer = FrameBuf::new(&mut buffer_data, WIDTH, HEIGHT);
@@ -217,7 +217,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
 
         Pointer::new(
             Point::new(scale_value(avg_adc_value), 10),
-            10,
+            5,
             false,
             cfg::COLOR_LEVEL,
         )
@@ -226,7 +226,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
 
         Pointer::new(
             Point::new(scale_value(self.calibration), 15),
-            10,
+            5,
             true,
             cfg::COLOR_CALIBRATION,
         )
@@ -235,7 +235,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
 
         Pointer::new(
             Point::new(scale_value(self.threshold_low), 15),
-            10,
+            5,
             true,
             cfg::COLOR_TRIGGER_LOW,
         )
@@ -244,7 +244,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
 
         Pointer::new(
             Point::new(scale_value(self.threshold_high), 15),
-            10,
+            5,
             true,
             cfg::COLOR_TRIGGER_HIGH,
         )
@@ -287,7 +287,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
         SMALL_FONT
             .render(
                 &s[..],
-                origin + Point::new(1, 25),
+                origin + Point::new(1, 12),
                 VerticalPosition::Top,
                 FontColor::WithBackground {
                     fg: color,

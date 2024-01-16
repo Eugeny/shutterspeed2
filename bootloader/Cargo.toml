@@ -14,12 +14,16 @@ test = false
 bench = false
 
 [dependencies]
+config = { path = "../config" }
 bootloader-api = { path = "../bootloader-api" }
-
+mipidsi.workspace = true
+fugit.workspace = true
+embedded-graphics.workspace = true
+embedded-text.workspace = true
 cortex-m-rt.workspace = true
 cortex-m.workspace = true
 cortex-m-semihosting.workspace = true
 embedded-hal.workspace = true
 stm32f4xx-hal.workspace = true
-
-panic-halt = "*"
+u8g2-fonts.workspace = true
+panic-abort = "*"

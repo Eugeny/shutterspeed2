@@ -10,7 +10,7 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use ufmt::uwrite;
 
 use crate::config::COLOR_BACKGROUND;
-use crate::fonts::TINIER_FONT;
+use crate::fonts::TINY_FONT;
 use crate::{config as cfg, AppDrawTarget};
 
 #[allow(clippy::too_many_arguments)]
@@ -54,7 +54,7 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
             (display.bounding_box().size.width / 2 - width / 2) as i32,
             graph_y,
         ),
-        Size::new(width, 40),
+        Size::new(width, 20),
     );
 
     if clear {
@@ -147,11 +147,11 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
         let start_x = start_x.min(end_x);
         let end_x = start_x.max(end_x);
 
-        let line_y = graph_bottom + 15;
+        let line_y = graph_bottom + 7;
 
         let line_style = PrimitiveStyleBuilder::new()
             .stroke_color(cfg::COLOR_CHART_2)
-            .stroke_width(2)
+            .stroke_width(1)
             .build();
 
         Line::new(Point::new(start_x, line_y), Point::new(end_x, line_y))
@@ -160,7 +160,7 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
             .unwrap();
 
         for x in [start_x, end_x] {
-            Line::new(Point::new(x, line_y - 5), Point::new(x, line_y + 5))
+            Line::new(Point::new(x, line_y - 3), Point::new(x, line_y + 3))
                 .into_styled(line_style)
                 .draw(display)
                 .unwrap();
@@ -173,13 +173,13 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
         //     )
         //     .unwrap();
 
-        TINIER_FONT
+        TINY_FONT
             .with_line_height(20)
             .render_aligned(
                 &micros_to_string(raw_micros)[..],
                 Point::new(
                     (start_x + end_x) / 2,
-                    line_y + TINIER_FONT.get_ascent() as i32 / 2,
+                    line_y + TINY_FONT.get_ascent() as i32 / 2,
                 ),
                 VerticalPosition::Baseline,
                 HorizontalAlignment::Center,
@@ -191,14 +191,11 @@ pub fn draw_chart<const LEN: usize, D: AppDrawTarget<E>, E: Debug>(
             )
             .unwrap();
 
-        TINIER_FONT
+        TINY_FONT
             .with_line_height(20)
             .render_aligned(
                 &micros_to_string(integrated_micros)[..],
-                Point::new(
-                    graph_rect.center().x,
-                    graph_rect.bottom_right().unwrap().y - 3,
-                ),
+                Point::new(graph_rect.center().x, graph_rect.bottom_right().unwrap().y),
                 VerticalPosition::Bottom,
                 HorizontalAlignment::Center,
                 FontColor::Transparent(COLOR_BACKGROUND),

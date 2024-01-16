@@ -20,6 +20,8 @@ rtic-monotonics = { version = "1.4.1", features = [
 ] }
 ufmt = "0.2.0"
 
+display-interface-spi = "0.4.1"
+mipidsi = "0.7.1"
 embedded-graphics = "0.8.0"
 heapless = { version = "0.8.0", features = ["ufmt"] }
 u8g2-fonts = { version = "0.4.0", features = ["embedded_graphics_textstyle"] }
@@ -36,5 +38,5 @@ micromath = { version = "2.1.0", features = ["num-traits"] }
 codegen-units = 1   # better optimizations
 debug = true        # symbols are nice and they don't increase the size on Flash
 lto = true          # better optimizations
-opt-level = "z"
+opt-level = "s"
 strip = "debuginfo"

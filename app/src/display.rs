@@ -1,41 +1,36 @@
 use app_ui::FXParams;
 #[cfg(feature = "effects")]
 use app_ui::FX;
-use display_interface_spi::SPIInterfaceNoCS;
+use config as hw;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::Dimensions;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Pixel;
-use embedded_hal::blocking::delay::DelayUs;
-use mipidsi::models::ST7789;
-use config::hal::gpio::{ErasedPin, Output};
+use hw::display_interface_spi::SPIInterfaceNoCS;
+use hw::hal::gpio::{ErasedPin, Output};
+use mipidsi::models::ST7735s;
 
 pub trait DisplayInterface: embedded_hal::blocking::spi::Write<u8> {}
 impl<W: embedded_hal::blocking::spi::Write<u8>> DisplayInterface for W {}
 
 pub struct Display<DI: DisplayInterface> {
-    inner: mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7789, ErasedPin<Output>>,
+    inner: mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7735s, ErasedPin<Output>>,
     backlight_pin: ErasedPin<Output>,
     fx_params: FXParams,
 }
 
 impl<DI: DisplayInterface> Display<DI> {
-    pub fn new<Delay: DelayUs<u32>>(
-        spi: DI,
-        dc_pin: ErasedPin<Output>,
-        rst_pin: ErasedPin<Output>,
+    pub fn new(
+        inner: mipidsi::Display<
+            SPIInterfaceNoCS<DI, ErasedPin<Output>>,
+            ST7735s,
+            ErasedPin<Output>,
+        >,
         backlight_pin: ErasedPin<Output>,
-        delay: &mut Delay,
     ) -> Self {
-        let di = SPIInterfaceNoCS::new(spi, dc_pin);
-        let display = mipidsi::Builder::st7789(di)
-            .with_orientation(mipidsi::Orientation::Portrait(false))
-            .with_invert_colors(mipidsi::ColorInversion::Inverted)
-            .init(delay, Some(rst_pin))
-            .unwrap();
         Display {
-            inner: display,
+            inner,
             backlight_pin,
             fx_params: FXParams::default(),
         }
