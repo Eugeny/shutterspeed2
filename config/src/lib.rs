@@ -19,7 +19,7 @@ pub const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
 pub const SAMPLE_RATE_HZ: u32 = 100_000_u32;
 pub const SYSCLK: u32 = 84_000_000;
 pub const HCLK: u32 = 42_000_000;
-pub const SPI_FREQ_HZ: u32 = 35_000_000;
+pub const SPI_FREQ_HZ: u32 = 10_000_000;
 
 pub type DisplaySpiType = Spi<SPI1>;
 pub type DmaTransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
@@ -41,51 +41,50 @@ macro_rules! setup_clocks {
     }};
 }
 
+pub fn _setup_adc_timer(nvic: &mut NVIC, t: TIM2, clocks: &Clocks) -> CounterHz<TIM2> {
+    use hal::timer::Event;
+
+    let mut timer = t.counter_hz(clocks);
+    timer.listen(Event::Update);
+    timer.start(SAMPLE_RATE_HZ.Hz()).unwrap();
+
+    timer
+}
 #[macro_export]
 macro_rules! setup_adc_timer {
     ($core:expr, $dp:expr, $clocks:expr) => {{
-        use $crate::fugit::ExtU32;
-        use $crate::hal::timer::Event;
-
-        let mut timer = $dp.TIM2.counter_hz($clocks);
-        timer.listen(Event::Update);
-        timer.start($crate::SAMPLE_RATE_HZ.Hz()).unwrap();
-
-        const IPRIO_ADC_TIMER: u8 = 5;
-
-        unsafe {
-            $core.NVIC.set_priority(Interrupt::TIM2, IPRIO_ADC_TIMER);
-        }
-
-        timer
+        $crate::_setup_adc_timer(&mut $core.NVIC, $dp.TIM2, $clocks)
     }};
+}
+
+pub fn _setup_adc(adc: ADC1, adc_pin: Pin<'A', 0, Analog>) -> Adc<ADC1> {
+    use hal::adc::config::{AdcConfig, Clock, ExternalTrigger, Scan, Sequence, TriggerMode};
+
+    // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
+    // Configure ADC for sequence conversion with interrtups
+    let adc_config = AdcConfig::default()
+        // .external_trigger(TriggerMode::RisingEdge, ExternalTrigger::Tim_2_trgo)
+        // .continuous(Continuous::Continuous)
+        .dma(Dma::Continuous)
+        .scan(Scan::Disabled)
+        .clock(Clock::Pclk2_div_6)
+        .resolution(ADC_RESOLUTION);
+
+    let mut adc = Adc::adc1(adc, true, adc_config);
+    adc.configure_channel(&adc_pin, Sequence::One, SAMPLE_TIME);
+    adc
 }
 
 #[macro_export]
 macro_rules! setup_adc {
     ($dp:expr, $gpio:expr) => {{
-        use hal::adc::config::{AdcConfig, Clock, Dma, Resolution, SampleTime, Scan, Sequence};
-        use hal::adc::Adc;
-
-        let adc_pin = $gpio.a.pa0.into_analog();
-        // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
-        // Configure ADC for sequence conversion with interrtups
-        let adc_config = AdcConfig::default()
-            .dma(Dma::Continuous)
-            .scan(Scan::Disabled)
-            .clock(Clock::Pclk2_div_6)
-            .resolution($crate::ADC_RESOLUTION);
-
-        let mut adc = Adc::adc1($dp.ADC1, true, adc_config);
-        adc.configure_channel(&adc_pin, Sequence::One, $crate::SAMPLE_TIME);
-
-        adc
+        $crate::_setup_adc($dp.ADC1, $gpio.a.pa0.into_analog())
     }};
 }
 
 #[macro_export]
 macro_rules! setup_adc_dma_transfer {
-    ($dp:expr, $adc:expr, $buffer:expr) => {{
+    ($core:expr, $dp:expr, $adc:expr, $buffer:expr) => {{
         use hal::dma::config::DmaConfig;
         use hal::dma::{PeripheralToMemory, Stream0, StreamsTuple, Transfer};
 
@@ -170,6 +169,8 @@ macro_rules! beeper_type {
 
             fn disable(&mut self) {
                 use hal::timer::Channel;
+                self.pwm.set_period(10.Hz());
+                self.pwm.enable(Channel::C3);
                 self.pwm.disable(Channel::C3);
             }
 
@@ -215,7 +216,6 @@ pin_macro!($ adc_pin, a, pa0);
 
 pin_macro!($ led_pin, c, pc13);
 
-pin_macro!($ mode_button_pin, a, pa1);
 pin_macro!($ measure_button_pin, a, pa2);
 
 pin_macro!($ usb_dm_pin, a, pa11);
@@ -224,9 +224,13 @@ pin_macro!($ usb_dp_pin, a, pa12);
 pin_macro!($ rotary_dt_pin, c, pc14);
 pin_macro!($ rotary_clk_pin, c, pc15);
 
-use hal::adc::config::{Resolution, SampleTime};
+use fugit::RateExtU32;
+use hal::adc::config::{Resolution, SampleTime, Dma, Continuous};
 use hal::adc::Adc;
 use hal::dma::{PeripheralToMemory, Stream0, Transfer};
-use hal::pac::{ADC1, DMA2, SPI1, TIM2};
+use hal::gpio::{Analog, Pin};
+use hal::pac::{ADC1, DMA2, NVIC, SPI1, TIM2};
+use hal::rcc::Clocks;
 use hal::spi::Spi;
-use hal::timer::CounterHz;
+use hal::timer::{CounterHz, TimerExt};
+use hal::Listen;

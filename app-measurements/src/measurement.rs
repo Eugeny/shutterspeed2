@@ -209,8 +209,10 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
     ) -> Self {
         Self::Idle {
             buffer,
-            trigger_low: (calibration_value as f32 * trigger_threshold_low) as u16,
-            trigger_high: (calibration_value as f32 * trigger_threshold_high) as u16,
+            trigger_low: ((calibration_value as f32 * trigger_threshold_low) as u16)
+                .max(calibration_value + 5),
+            trigger_high: ((calibration_value as f32 * trigger_threshold_high) as u16)
+                .max(calibration_value + 10),
         }
     }
 

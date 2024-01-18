@@ -30,7 +30,7 @@ mod app {
     use hal::gpio::{Edge, ErasedPin, Input, Output};
     #[cfg(usb)]
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
-    use hal::pac::{self, Interrupt};
+    use hal::pac;
     use hal::prelude::*;
     use hal::timer::Flag;
     use mipidsi::Error as MipidsiError;
@@ -38,8 +38,8 @@ mod app {
     use ouroboros::self_referencing;
     use rotary_encoder_embedded::standard::StandardMode;
     use rotary_encoder_embedded::{Direction, RotaryEncoder};
+    use rtic_monotonics::create_systick_token;
     use rtic_monotonics::systick::Systick;
-    use rtic_monotonics::{create_systick_token, Monotonic};
     use rtic_sync::channel::{Receiver, Sender};
     use rtic_sync::make_channel;
     #[cfg(usb)]
@@ -139,7 +139,6 @@ mod app {
     struct Local {
         adc_dma_buffer: Option<&'static mut u16>,
         timer: config::AdcTimerType,
-        mode_button_pin: ErasedPin<Input>,
         measure_button_pin: ErasedPin<Input>,
         led_pin: ErasedPin<Output>,
         beeper: Beeper,
@@ -164,6 +163,7 @@ mod app {
         let mut backlight_pin = hw::display_backlight_pin!(gpio).into_push_pull_output();
         backlight_pin.set_low();
 
+        // HWCONFIG
         // Workaround 1 enable prefetch
         // {
         //     dp.FLASH
@@ -171,12 +171,14 @@ mod app {
         //         .write(|w| w.prften().enabled().icen().enabled().dcen().enabled());
         // }
 
+        // HWCONFIG
         // Workaround 2 AN4073 4.1 reduce ADC crosstalk
         // {
         //     dp.PWR.cr.write(|w| w.adcdc1().set_bit());
         // }
 
-        // // Workaround 3 AN4073 4.1 reduce ADC crosstalk
+        // HWCONFIG
+        // Workaround 3 AN4073 4.1 reduce ADC crosstalk
         // {
         //     dp.SYSCFG.pmc.write(|x| x.adc1dc2().set_bit())
         // }
@@ -192,7 +194,7 @@ mod app {
         Systick::start(cx.core.SYST, hw::SYSCLK, systick_token);
 
         let adc = config::setup_adc!(dp, gpio);
-        let transfer = config::setup_adc_dma_transfer!(dp, adc, cx.local.first_buffer);
+        let transfer = config::setup_adc_dma_transfer!(cx.core, dp, adc, cx.local.first_buffer);
         let timer = config::setup_adc_timer!(cx.core, dp, &clocks);
         let mut delay = config::delay_timer!(dp).delay_us(&clocks);
 
@@ -205,11 +207,6 @@ mod app {
 
         display.sneaky_clear(Rgb565::BLACK);
         display.backlight_on();
-
-        let mut mode_button_pin = hw::mode_button_pin!(gpio).into_pull_down_input();
-        mode_button_pin.make_interrupt_source(&mut syscfg);
-        mode_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
-        mode_button_pin.enable_interrupt(&mut dp.EXTI);
 
         let mut measure_button_pin = hw::measure_button_pin!(gpio).into_pull_down_input();
         measure_button_pin.make_interrupt_source(&mut syscfg);
@@ -272,7 +269,6 @@ mod app {
             Local {
                 adc_dma_buffer: Some(cx.local._adc_dma_buffer),
                 timer,
-                mode_button_pin: mode_button_pin.erase(),
                 measure_button_pin: measure_button_pin.erase(),
                 led_pin: led_pin.erase(),
                 beeper,
@@ -300,6 +296,7 @@ mod app {
                             AppMode::Start
                             | AppMode::Calibrating
                             | AppMode::Measure
+                            | AppMode::Results
                             | AppMode::Debug => {
                                 *app_mode = AppMode::Menu;
                             }
@@ -359,28 +356,6 @@ mod app {
     }
 
     // HWCONFIG
-    #[task(binds = EXTI1, shared = [app_mode, beep_sender], local=[mode_button_pin], priority = 4)]
-    fn mode_button_press(mut cx: mode_button_press::Context) {
-        cx.shared.beep_sender.lock(|beep_sender| {
-            let _ = beep_sender.try_send(Chirp::Button);
-        });
-        cx.shared.app_mode.lock(|app_mode| match app_mode {
-            // _ => {
-            //     *app_mode = AppMode::Update;
-            // }
-            AppMode::None | AppMode::Results | AppMode::Start | AppMode::Measure => {
-                debug_task::spawn().unwrap();
-            }
-            AppMode::Debug => {
-                *app_mode = AppMode::Start;
-                debug_task::spawn().unwrap();
-            }
-            _ => (),
-        });
-        cx.local.mode_button_pin.clear_interrupt_pending_bit();
-    }
-
-    // HWCONFIG
     #[task(binds = EXTI2, shared = [app_mode, beep_sender, selected_menu_option], local=[measure_button_pin, led_pin], priority = 4)]
     fn measure_button_press(mut cx: measure_button_press::Context) {
         cx.shared.beep_sender.lock(|beep_sender| {
@@ -397,7 +372,7 @@ mod app {
                     // *app_mode = AppMode::Start;
                 }
                 1 => {
-                    *app_mode = AppMode::Debug;
+                    let _ = debug_task::spawn();
                 }
                 2 => {}
                 3 => {
@@ -417,7 +392,7 @@ mod app {
     }
 
     // HWCONFIG
-    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [adc_dma_buffer], priority = 3)]
+    #[task(binds = DMA2_STREAM0, shared = [transfer, adc_value, sample_counter, calibration_state, measurement], local = [adc_dma_buffer], priority = 5)]
     fn dma(cx: dma::Context) {
         let mut shared = cx.shared;
         let local = cx.local;
@@ -571,8 +546,6 @@ mod app {
         let mut screen: Screens<DisplayType, MipidsiError> = StartScreen::default().into();
 
         loop {
-            let now = Systick::now();
-
             if let Some(changed_mode) = cx.shared.app_mode.lock(|app_mode| {
                 if *app_mode != mode {
                     mode = *app_mode;
@@ -658,12 +631,12 @@ mod app {
                 _ => (),
             }
 
-            let deadline = if matches!(screen, Screens::Debug(_)) {
-                Systick::now() + 5.millis()
-            } else {
-                now + 25.millis()
+            let delay = match mode {
+                AppMode::Debug => 5.millis(),
+                AppMode::Calibrating | AppMode::Measure => 500.millis(),
+                _ => 25.millis(),
             };
-            Systick::delay_until(deadline).await;
+            Systick::delay(delay).await;
         }
     }
 
