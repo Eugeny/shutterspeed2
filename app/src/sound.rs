@@ -31,9 +31,6 @@ pub trait BeeperExt {
         self.set_duty_percent(50);
         self.note(note);
         Systick::delay(duration_millis.millis()).await;
-        // self.set_duty_percent(10);
-        // self.note(note + 12);
-        // Systick::delay(10.millis()).await;
         self.disable();
     }
 }

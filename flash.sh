@@ -11,4 +11,7 @@ rust-objcopy -O binary target/thumbv7m-none-eabi/release/app firmware.app.bin
 
 cp firmware.app.bin firmware.bin
 dd conv=notrunc if=firmware.bootloader.bin of=firmware.bin
-dfu-util -R -a 0 --dfuse-address 0x08000000 -D firmware.bin
+dfu-suffix -v 0483 -d df11 -a firmware.bin
+dfu-prefix -a firmware.bin -L
+mv firmware.bin firmware.dfu
+dfu-util -w -R -a 0 --dfuse-address 0x08000000 -D firmware.dfu

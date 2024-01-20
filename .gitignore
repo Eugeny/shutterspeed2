@@ -12,3 +12,4 @@ target/
 !.vscode/extensions.json
 
 *.bin
+*.dfu

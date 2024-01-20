@@ -331,6 +331,7 @@ mod app {
                     beeper.disable();
                 }
                 Chirp::Measuring => {
+                    beeper.play(24 - 2, 100).await;
                     beeper.play(20, 100).await;
                 }
                 Chirp::Done => {
@@ -429,6 +430,10 @@ mod app {
         cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
+
+        // Let the system settle a bit
+        Systick::delay(250.millis()).await;
+
         cx.shared.calibration_state.lock(|calibration_state| {
             calibration_state.begin();
         });
