@@ -1,4 +1,5 @@
 use heapless::HistoryBuffer;
+use infinity_sampler::{RawReservoir, SamplingOutcome, SamplingRate, SamplingReservoir};
 
 use crate::util::{HistoryBufferDoubleEndedIterator, LaxDuration, LaxMonotonic};
 
@@ -56,37 +57,12 @@ impl Default for CalibrationState {
 }
 
 const MARGIN_SAMPLES: usize = 100;
-pub const RING_BUFFER_LEN: usize = 500;
+pub const RING_BUFFER_LEN: usize = 512;
 pub type RingBuffer = HistoryBuffer<u16, RING_BUFFER_LEN>;
 
-#[derive(Copy, Clone)]
-pub struct SampleRate {
-    sample_rate: u32,
-    sample_rate_counter: u32,
-}
-
-impl SampleRate {
-    fn new(sample_rate: u32) -> Self {
-        Self {
-            sample_rate,
-            sample_rate_counter: 0,
-        }
-    }
-
-    fn step(&mut self) -> bool {
-        self.sample_rate_counter += 1;
-        self.sample_rate_counter %= self.sample_rate;
-        self.sample_rate_counter == 0
-    }
-
-    fn mul(&mut self, ratio: u32) {
-        self.sample_rate *= ratio;
-    }
-}
-
-pub struct SamplingBuffer<'a, const LEN: usize> {
-    buffer: &'a mut HistoryBuffer<u16, LEN>,
-    sample_rate: SampleRate,
+#[derive(Clone)]
+pub struct SamplingBuffer<const LEN: usize> {
+    buffer: SamplingReservoir<u16, LEN>,
     samples_since_start: usize,
 }
 
@@ -96,16 +72,15 @@ pub enum SamplingBufferWriteResult {
     SampledAndCompacted { factor: u32 },
 }
 
-impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
-    pub fn new(buffer: &'a mut HistoryBuffer<u16, LEN>, samples_since_start: usize) -> Self {
+impl<const LEN: usize> SamplingBuffer<LEN> {
+    pub fn new(buffer: SamplingReservoir<u16, LEN>, samples_since_start: usize) -> Self {
         Self {
             buffer,
-            sample_rate: SampleRate::new(1),
             samples_since_start,
         }
     }
 
-    pub fn into_inner(self) -> &'a mut HistoryBuffer<u16, LEN> {
+    pub fn into_inner(self) -> SamplingReservoir<u16, LEN> {
         self.buffer
     }
 
@@ -113,36 +88,25 @@ impl<'a, const LEN: usize> SamplingBuffer<'a, LEN> {
         self.samples_since_start
     }
 
-    pub fn sample_rate(&self) -> &SampleRate {
-        &self.sample_rate
-    }
-
-    pub fn extend_pre_buffer<I: Iterator<Item = u16>>(&mut self, iter: I) {
-        self.buffer.extend(iter)
+    pub fn sample_rate(&self) -> &SamplingRate {
+        self.buffer.sampling_rate()
     }
 
     #[inline(always)]
-    pub fn write(&mut self, value: u16) -> SamplingBufferWriteResult {
-        if !self.sample_rate.step() {
-            return SamplingBufferWriteResult::Discarded;
+    pub fn write(&mut self, value: u16) -> SamplingOutcome<u16> {
+        let outcome = self.buffer.sample(value);
+
+        match outcome {
+            SamplingOutcome::Consumed => {
+                self.samples_since_start += 1;
+            }
+            SamplingOutcome::ConsumedAndRateReduced { factor } => {
+                // Compactify samples in the buffer by discarding every 2nd item
+                self.samples_since_start /= factor as usize;
+            }
+            _ => (),
         }
-
-        self.buffer.write(value);
-        self.samples_since_start += 1;
-
-        if self.buffer.len() > self.buffer.capacity() - MARGIN_SAMPLES {
-            // Compactify samples in the buffer by discarding every 2nd item
-            let factor = 2;
-            compactify_history_buffer(self.buffer, factor);
-            self.samples_since_start /= factor;
-            self.sample_rate.mul(factor as u32);
-
-            return SamplingBufferWriteResult::SampledAndCompacted {
-                factor: factor as u32,
-            };
-        }
-
-        SamplingBufferWriteResult::Sampled
+        outcome
     }
 }
 
@@ -174,9 +138,9 @@ pub struct MeasurementResult {
 }
 
 #[allow(clippy::large_enum_variant)]
-pub enum Measurement<'a, M: LaxMonotonic> {
+pub enum Measurement<M: LaxMonotonic> {
     Idle {
-        buffer: &'a mut RingBuffer,
+        buffer: HistoryBuffer<u16, MARGIN_SAMPLES>,
         trigger_high: u16,
         trigger_low: u16,
     },
@@ -185,30 +149,28 @@ pub enum Measurement<'a, M: LaxMonotonic> {
         peak: u16,
         integrated: u64, // samples x (abs value)
         trigger_low: u16,
-        sampling_buffer: SamplingBuffer<'a, RING_BUFFER_LEN>,
+        head_buffer: HistoryBuffer<u16, MARGIN_SAMPLES>,
+        sampling_buffer: SamplingBuffer<RING_BUFFER_LEN>,
     },
     Trailing {
-        buffer: &'a mut RingBuffer,
+        head_buffer: HistoryBuffer<u16, MARGIN_SAMPLES>,
+        buffer: SamplingReservoir<u16, RING_BUFFER_LEN>,
         samples_since_start: usize,
         samples_since_end: usize,
         duration_micros: u64,
         integrated_duration_micros: u64,
-        sample_rate: SampleRate,
     },
     Done(MeasurementResult),
 }
 
-static mut TMP_BUFFER: RingBuffer = RingBuffer::new();
-
-impl<'a, M: LaxMonotonic> Measurement<'a, M> {
+impl<M: LaxMonotonic> Measurement<M> {
     pub fn new(
         calibration_value: u16,
-        buffer: &'a mut RingBuffer,
         trigger_threshold_low: f32,
         trigger_threshold_high: f32,
     ) -> Self {
         Self::Idle {
-            buffer,
+            buffer: HistoryBuffer::new(),
             trigger_low: ((calibration_value as f32 * trigger_threshold_low) as u16)
                 .max(calibration_value + 5),
             trigger_high: ((calibration_value as f32 * trigger_threshold_high) as u16)
@@ -242,10 +204,8 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                 if value > *trigger_high {
                     let now = M::now();
 
-                    // "Take" the buffer reference
-                    let buffer = core::mem::replace(buffer, unsafe { &mut TMP_BUFFER });
+                    let new_buffer = SamplingReservoir::new();
 
-                    // Now look back for the trigger_low
                     let last_index_above_trigger = HistoryBufferDoubleEndedIterator::new(buffer)
                         .enumerate()
                         .rev()
@@ -261,10 +221,11 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                         .map(|&x| x as u64)
                         .sum();
 
-                    let sampling_buffer = SamplingBuffer::new(buffer, integrated_samples);
+                    let sampling_buffer = SamplingBuffer::new(new_buffer, integrated_samples);
 
                     *self = Self::Measuring {
                         since: now,
+                        head_buffer: buffer.clone(),
                         sampling_buffer,
                         peak: value,
                         integrated,
@@ -281,6 +242,7 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
             }
             Self::Measuring {
                 since,
+                head_buffer,
                 sampling_buffer,
                 integrated,
                 peak,
@@ -288,11 +250,11 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
             } => {
                 *peak = (*peak).max(value);
                 match sampling_buffer.write(value) {
-                    SamplingBufferWriteResult::Discarded => (),
-                    SamplingBufferWriteResult::Sampled => {
+                    SamplingOutcome::Discarded(_) => (),
+                    SamplingOutcome::Consumed => {
                         *integrated += value as u64;
                     }
-                    SamplingBufferWriteResult::SampledAndCompacted { factor } => {
+                    SamplingOutcome::ConsumedAndRateReduced { factor } => {
                         *integrated += value as u64;
                         *integrated /= factor as u64;
                     }
@@ -302,13 +264,6 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     let t_end = M::now();
 
                     let samples_since_start = sampling_buffer.samples_since_start();
-                    let sample_rate = *sampling_buffer.sample_rate();
-
-                    let sample_buffer = core::mem::replace(
-                        sampling_buffer,
-                        SamplingBuffer::new(unsafe { &mut TMP_BUFFER }, 0),
-                    )
-                    .into_inner();
 
                     // remove area below threshold
                     let integrated_value_samples =
@@ -324,30 +279,32 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
 
                     *self = Self::Trailing {
                         duration_micros,
-                        buffer: sample_buffer,
+                        head_buffer: head_buffer.clone(),
+                        buffer: sampling_buffer.clone().into_inner(),
                         samples_since_start,
                         samples_since_end: 0,
                         integrated_duration_micros,
-                        sample_rate,
                     }
                 }
             }
             Self::Trailing {
                 duration_micros,
+                head_buffer,
                 buffer,
                 samples_since_start,
                 samples_since_end,
                 integrated_duration_micros,
-                sample_rate,
             } => {
-                if !sample_rate.step() {
+                let outcome = buffer.sample(value);
+                if matches!(outcome, SamplingOutcome::Discarded(_)) {
                     return;
                 }
 
-                let margin = MARGIN_SAMPLES / sample_rate.sample_rate as usize;
+                let sample_rate = buffer.sampling_rate();
+
+                let margin = MARGIN_SAMPLES / sample_rate.divisor() as usize;
 
                 if *samples_since_end < margin {
-                    buffer.write(value);
                     *samples_since_end += 1;
                     *samples_since_start += 1;
                 } else {
@@ -355,7 +312,7 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     let final_margin = margin.min(*samples_since_start - *samples_since_end);
 
                     let buffer_len = buffer.len();
-                    let iter = buffer.iter();
+                    let iter = buffer.clone().into_ordered_iter();
 
                     let end_index = buffer_len - *samples_since_end;
                     let iter = iter.take(end_index + final_margin);
@@ -368,6 +325,11 @@ impl<'a, M: LaxMonotonic> Measurement<'a, M> {
                     );
 
                     let mut final_buffer = RingBuffer::new();
+                    final_buffer.extend(
+                        head_buffer
+                            .oldest_ordered()
+                            .step_by(sample_rate.divisor() as usize),
+                    );
                     final_buffer.extend(&mut iter);
 
                     *samples_since_start -= margin - final_margin;

@@ -16,7 +16,7 @@ mod app {
     use core::num::Wrapping;
     use core::panic;
 
-    use app_measurements::{CalibrationState, CycleCounterClock, Measurement, RingBuffer};
+    use app_measurements::{CalibrationState, CycleCounterClock, Measurement};
     use app_ui::{
         BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, MenuScreen, ResultsScreen,
         Screen, Screens, StartScreen, UpdateScreen,
@@ -113,8 +113,6 @@ mod app {
         }
     }
 
-    static mut MEASUREMENT_BUFFER: RingBuffer = RingBuffer::new();
-
     #[cfg(usb)]
     type UsbDevicesImpl = UsbDevices;
 
@@ -128,7 +126,7 @@ mod app {
         sample_counter: Wrapping<u32>,
         app_mode: AppMode,
         calibration_state: CalibrationState,
-        measurement: Measurement<'static, CycleCounterClock<{ hw::SYSCLK }>>,
+        measurement: Measurement<CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
         usb_devices: UsbDevicesImpl,
         beep_sender: Sender<'static, Chirp, 1>,
@@ -254,7 +252,6 @@ mod app {
                 calibration_state: CalibrationState::Done(0),
                 measurement: Measurement::new(
                     0,
-                    unsafe { &mut MEASUREMENT_BUFFER },
                     hw::TRIGGER_THRESHOLD_LOW,
                     hw::TRIGGER_THRESHOLD_HIGH,
                 ),
@@ -446,7 +443,6 @@ mod app {
         cx.shared.measurement.lock(|measurement| {
             *measurement = Measurement::new(
                 calibration_value,
-                unsafe { &mut MEASUREMENT_BUFFER },
                 hw::TRIGGER_THRESHOLD_LOW,
                 hw::TRIGGER_THRESHOLD_HIGH,
             );
@@ -586,7 +582,6 @@ mod app {
                                     m,
                                     Measurement::new(
                                         Default::default(),
-                                        unsafe { &mut MEASUREMENT_BUFFER },
                                         hw::TRIGGER_THRESHOLD_LOW,
                                         hw::TRIGGER_THRESHOLD_HIGH,
                                     ),

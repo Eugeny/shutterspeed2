@@ -51,6 +51,7 @@ dependencies = [
  "cortex-m-microclock",
  "fugit",
  "heapless 0.8.0",
+ "infinity-sampler",
  "micromath",
  "rtic-monotonics",
 ]
@@ -237,6 +238,17 @@ name = "critical-section"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7059fff8937831a9ae6f0fe4d658ffabf58f2ca96aa9dec1c889f936f705f216"
+
+[[package]]
+name = "delegate"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e018fccbeeb50ff26562ece792ed06659b9c2dae79ece77c4456bb10d9bf79b"
+dependencies = [
+ "proc-macro2 1.0.71",
+ "quote 1.0.33",
+ "syn 2.0.43",
+]
 
 [[package]]
 name = "deranged"
@@ -542,6 +554,13 @@ checksum = "d530e1a18b1cb4c484e6e34556a0d948706958449fca0cab753d649f2bce3d1f"
 dependencies = [
  "equivalent",
  "hashbrown",
+]
+
+[[package]]
+name = "infinity-sampler"
+version = "0.1.2"
+dependencies = [
+ "delegate",
 ]
 
 [[package]]

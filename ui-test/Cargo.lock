@@ -35,6 +35,7 @@ version = "0.1.0"
 dependencies = [
  "fugit",
  "heapless",
+ "infinity-sampler",
  "micromath",
 ]
 
@@ -182,6 +183,17 @@ checksum = "73770f8e1fe7d64df17ca66ad28994a0a623ea497fa69486e14984e715c5d174"
 dependencies = [
  "adler32",
  "byteorder",
+]
+
+[[package]]
+name = "delegate"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e018fccbeeb50ff26562ece792ed06659b9c2dae79ece77c4456bb10d9bf79b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.48",
 ]
 
 [[package]]
@@ -370,6 +382,13 @@ dependencies = [
  "png",
  "scoped_threadpool",
  "tiff",
+]
+
+[[package]]
+name = "infinity-sampler"
+version = "0.1.2"
+dependencies = [
+ "delegate",
 ]
 
 [[package]]
