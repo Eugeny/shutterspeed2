@@ -41,7 +41,7 @@ macro_rules! setup_clocks {
     }};
 }
 
-pub fn _setup_adc_timer(nvic: &mut NVIC, t: TIM2, clocks: &Clocks) -> CounterHz<TIM2> {
+pub fn _setup_adc_timer(t: TIM2, clocks: &Clocks) -> CounterHz<TIM2> {
     use hal::timer::Event;
 
     let mut timer = t.counter_hz(clocks);
@@ -52,19 +52,15 @@ pub fn _setup_adc_timer(nvic: &mut NVIC, t: TIM2, clocks: &Clocks) -> CounterHz<
 }
 #[macro_export]
 macro_rules! setup_adc_timer {
-    ($core:expr, $dp:expr, $clocks:expr) => {{
-        $crate::_setup_adc_timer(&mut $core.NVIC, $dp.TIM2, $clocks)
+    ($dp:expr, $clocks:expr) => {{
+        $crate::_setup_adc_timer($dp.TIM2, $clocks)
     }};
 }
 
 pub fn _setup_adc(adc: ADC1, adc_pin: Pin<'A', 0, Analog>) -> Adc<ADC1> {
-    use hal::adc::config::{AdcConfig, Clock, ExternalTrigger, Scan, Sequence, TriggerMode};
+    use hal::adc::config::{AdcConfig, Clock, Scan, Sequence};
 
-    // Create Handler for adc peripheral (PA0 and PA4 are connected to ADC1)
-    // Configure ADC for sequence conversion with interrtups
     let adc_config = AdcConfig::default()
-        // .external_trigger(TriggerMode::RisingEdge, ExternalTrigger::Tim_2_trgo)
-        // .continuous(Continuous::Continuous)
         .dma(Dma::Continuous)
         .scan(Scan::Disabled)
         .clock(Clock::Pclk2_div_6)
@@ -225,11 +221,11 @@ pin_macro!($ rotary_dt_pin, c, pc14);
 pin_macro!($ rotary_clk_pin, c, pc15);
 
 use fugit::RateExtU32;
-use hal::adc::config::{Resolution, SampleTime, Dma, Continuous};
+use hal::adc::config::{Resolution, SampleTime, Dma};
 use hal::adc::Adc;
 use hal::dma::{PeripheralToMemory, Stream0, Transfer};
 use hal::gpio::{Analog, Pin};
-use hal::pac::{ADC1, DMA2, NVIC, SPI1, TIM2};
+use hal::pac::{ADC1, DMA2, SPI1, TIM2};
 use hal::rcc::Clocks;
 use hal::spi::Spi;
 use hal::timer::{CounterHz, TimerExt};

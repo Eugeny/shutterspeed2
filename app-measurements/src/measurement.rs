@@ -219,7 +219,6 @@ impl<M: LaxMonotonic> Measurement<M> {
                         samples_since_start: integrated_samples,
                         trigger_low: *trigger_low,
                     };
-                    return;
                 }
             }
             MeasurementState::Measuring {

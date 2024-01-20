@@ -193,7 +193,7 @@ mod app {
 
         let adc = config::setup_adc!(dp, gpio);
         let transfer = config::setup_adc_dma_transfer!(cx.core, dp, adc, cx.local.first_buffer);
-        let timer = config::setup_adc_timer!(cx.core, dp, &clocks);
+        let timer = config::setup_adc_timer!(dp, &clocks);
         let mut delay = config::delay_timer!(dp).delay_us(&clocks);
 
         let mut display = {
