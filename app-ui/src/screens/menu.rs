@@ -29,7 +29,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
         TINY_FONT
             .render_aligned(
                 env!("CARGO_PKG_VERSION"),
-                Point::new(width as i32 / 2, height as i32 - 30),
+                Point::new(width as i32 / 2, height as i32 - 15),
                 VerticalPosition::Top,
                 HorizontalAlignment::Center,
                 FontColor::WithBackground {
@@ -46,7 +46,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
         let fg = config::COLOR_RESULT_VALUE;
 
         let mut y_pos = 20;
-        let item_height = 25;
+        let item_height = 20;
         let should_draw = self.last_position != self.position;
 
         for (index, label) in LABELS.iter().enumerate() {
@@ -61,12 +61,12 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
                 SMALL_FONT
                     .render(
                         *label,
-                        Point::new(15, y_pos),
+                        Point::new(16, y_pos),
                         VerticalPosition::Top,
                         if index == self.position {
-                            FontColor::WithBackground { fg, bg }
-                        } else {
                             FontColor::WithBackground { fg: bg, bg: fg }
+                        } else {
+                            FontColor::WithBackground { fg, bg }
                         },
                         display,
                     )
@@ -81,7 +81,10 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
                                 ">",
                                 Point::new(5, y_pos),
                                 VerticalPosition::Top,
-                                FontColor::Transparent(config::COLOR_MENU_ACTION),
+                                FontColor::WithBackground {
+                                    bg: config::COLOR_MENU_ACTION,
+                                    fg: config::COLOR_BACKGROUND,
+                                },
                                 display,
                             )
                             .unwrap();

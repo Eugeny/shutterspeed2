@@ -5,45 +5,80 @@ use std::time::Duration;
 use app_measurements::{CalibrationState, MeasurementResult};
 use app_ui::panic::draw_panic_screen;
 use app_ui::{
-    BootScreen, CalibrationScreen, DebugScreen, FXParams, MeasurementScreen, MenuScreen,
-    ResultsScreen, Screen, Screens, StartScreen, UpdateScreen, FX,
+    BootScreen, CalibrationScreen, DebugScreen, HintRefresh, MeasurementScreen,
+    MenuScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen,
 };
-use embedded_graphics::geometry::Size;
+use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::geometry::{OriginDimensions, Size};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::Pixel;
 use embedded_graphics_simulator::sdl2::Keycode;
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use heapless::HistoryBuffer;
 
+struct LiveDisplay<'a> {
+    display: &'a mut SimulatorDisplay<Rgb565>,
+    window: &'a mut Window,
+}
+
+impl HintRefresh for LiveDisplay<'_> {
+    fn hint_refresh(&mut self) {
+        self.window.update(self.display);
+    }
+}
+
+impl OriginDimensions for LiveDisplay<'_> {
+    fn size(&self) -> Size {
+        self.display.size()
+    }
+}
+
+impl DrawTarget for LiveDisplay<'_> {
+    type Color = Rgb565;
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>,
+    {
+        self.display.draw_iter(pixels)?;
+        Ok(())
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    // Create a simulated display with the dimensions of the text box.
-    let mut display = SimulatorDisplay::new(Size::new(128, 160));
-
     let mut panic_visible = false;
 
-    // let mut display = FX::new(&mut display, FXParams::default());
-
-    let mut screen = Screens::Boot(BootScreen::default());
-    screen.draw_init(&mut display).await;
+    let mut display = SimulatorDisplay::new(Size::new(128, 160));
 
     let output_settings = OutputSettingsBuilder::new().scale(2).build();
     let mut w = Window::new("UI", &output_settings);
 
+    let mut live_display = LiveDisplay {
+        display: &mut display,
+        window: &mut w,
+    };
+
+    let mut screen = Screens::Boot(BootScreen::default());
+    screen.draw_init(&mut live_display).await;
+    live_display.hint_refresh();
+
     'outer: loop {
-        screen.draw_frame(&mut display).await;
-        // w.update(display.inner());
-        // display.step_params();
+        screen.draw_frame(&mut live_display).await;
+        live_display.hint_refresh();
 
         if panic_visible {
             draw_panic_screen(
-                &mut display,
+                &mut live_display,
                 "TEST\nwarning: unused imports: `FXParams`, `FX`\n        --> src/main.rs:8:36",
             );
         }
-        w.update(&display);
 
-        for e in w.events() {
+        let mut need_init = false;
+        for e in live_display.window.events() {
             match e {
                 SimulatorEvent::Quit => {
                     break 'outer;
@@ -51,17 +86,21 @@ async fn main() {
                 SimulatorEvent::KeyUp { keycode, .. } => {
                     panic_visible = false;
                     match keycode {
+                        Keycode::Num1 => {
+                            screen = BootScreen::default().into();
+                            need_init = true;
+                        }
                         Keycode::Q => {
                             screen = StartScreen::default().into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
                         Keycode::W => {
                             screen = CalibrationScreen::default().into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
                         Keycode::E => {
                             screen = MeasurementScreen::default().into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
                         Keycode::R => {
                             let mut sample_buffer = HistoryBuffer::new();
@@ -91,35 +130,43 @@ async fn main() {
                                 },
                             )
                             .into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
                         Keycode::T => {
                             screen = UpdateScreen::default().into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
                         Keycode::Y => {
                             screen = MenuScreen::default().into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
                         Keycode::U => {
                             panic_visible = true;
                         }
                         Keycode::I => {
-                            let mut ds =DebugScreen::new(50, 1.2, 1.5, 128);
+                            let mut ds = DebugScreen::new(50, 1.2, 1.5, 128);
                             ds.step(55);
                             screen = ds.into();
-                            screen.draw_init(&mut display).await;
+                            need_init = true;
                         }
-                        Keycode::Up => {
-                            if let Screens::Menu(ref mut screen) = screen {
+                        Keycode::Up => match screen {
+                            Screens::Menu(ref mut screen) => {
                                 screen.position = screen.position.saturating_sub(1);
                             }
-                        }
-                        Keycode::Down => {
-                            if let Screens::Menu(ref mut screen) = screen {
+                            Screens::Debug(ref mut screen) => {
+                                screen.step(screen.last_adc_value() + 5);
+                            }
+                            _ => (),
+                        },
+                        Keycode::Down => match screen {
+                            Screens::Menu(ref mut screen) => {
                                 screen.position = (screen.position + 1) % MenuScreen::options_len();
                             }
-                        }
+                            Screens::Debug(ref mut screen) => {
+                                screen.step(screen.last_adc_value() - 5);
+                            }
+                            _ => (),
+                        },
                         Keycode::Left | Keycode::Right => {
                             if let Screens::Menu(ref mut screen) = screen {
                                 screen.sensitivity = (screen.sensitivity + 1) % 3;
@@ -132,6 +179,19 @@ async fn main() {
             }
         }
 
-        thread::sleep(Duration::from_millis(20));
+        if need_init {
+            screen.draw_init(&mut live_display).await;
+            live_display.hint_refresh();
+        }
+
+        #[allow(clippy::single_match)]
+        match screen {
+            Screens::Debug(ref mut screen) => {
+                screen.step(screen.last_adc_value());
+            }
+            _ => (),
+        }
+
+        thread::sleep(Duration::from_millis(100));
     }
 }

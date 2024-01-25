@@ -14,7 +14,7 @@ test = false
 bench = false
 
 [dependencies]
-app-ui = { path = "../app-ui" }
+app-ui = { path = "../app-ui", features = ["std"]}
 app-measurements = { path = "../app-measurements" }
 
 heapless = "0.8"

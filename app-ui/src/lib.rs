@@ -18,8 +18,12 @@ pub use screens::{
     Screen, Screens, StartScreen, UpdateScreen,
 };
 
-pub trait AppDrawTarget<E>: DrawTarget<Color = Rgb565, Error = E> {}
-impl<E, D: DrawTarget<Color = Rgb565, Error = E>> AppDrawTarget<E> for D {}
+pub trait HintRefresh {
+    fn hint_refresh(&mut self);
+}
+
+pub trait AppDrawTarget<E>: DrawTarget<Color = Rgb565, Error = E> + HintRefresh {}
+impl<E, D: DrawTarget<Color = Rgb565, Error = E> + HintRefresh> AppDrawTarget<E> for D {}
 
 pub use badge::draw_badge;
 pub use fx::{FXParams, FX};

@@ -29,8 +29,11 @@ pub async fn draw_badge<D: AppDrawTarget<E>, E: Debug>(
         )
         .unwrap();
 
+    display.hint_refresh();
     #[cfg(feature = "cortex-m")]
     Systick::delay(50.millis()).await;
+    #[cfg(feature = "std")]
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     SMALL_FONT
         .render_aligned(

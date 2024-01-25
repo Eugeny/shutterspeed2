@@ -221,7 +221,7 @@ pin_macro!($ rotary_dt_pin, c, pc14);
 pin_macro!($ rotary_clk_pin, c, pc15);
 
 use fugit::RateExtU32;
-use hal::adc::config::{Resolution, SampleTime, Dma};
+use hal::adc::config::{Dma, Resolution, SampleTime};
 use hal::adc::Adc;
 use hal::dma::{PeripheralToMemory, Stream0, Transfer};
 use hal::gpio::{Analog, Pin};

@@ -54,6 +54,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for BootScreen<DT, E> {
         .await;
         #[cfg(feature = "cortex-m")]
         Systick::delay(150.millis()).await;
+        #[cfg(feature = "std")]
+        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
     }
 
     async fn draw_frame(&mut self, _display: &mut DT) {}

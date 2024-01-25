@@ -34,6 +34,9 @@ enum_dispatch.workspace = true
 micromath.workspace = true
 eg-seven-segment = "0.2.0"
 
+tokio = { version = "1", optional = true, features = ["time"]}
 
 [features]
+default = []
 cortex-m = ["rtic-monotonics", "app-measurements/cortex-m"]
+std = ["tokio"]

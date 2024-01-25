@@ -54,5 +54,6 @@ rtic-sync = "1.2.0"
 rotary-encoder-embedded = "0.2.0"
 
 [features]
+default = []
 usb = []
 effects = []

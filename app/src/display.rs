@@ -1,6 +1,6 @@
-use app_ui::FXParams;
 #[cfg(feature = "effects")]
 use app_ui::FX;
+use app_ui::{FXParams, HintRefresh};
 use config as hw;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::Dimensions;
@@ -67,6 +67,10 @@ impl<DI: DisplayInterface> Dimensions for Display<DI> {
     fn bounding_box(&self) -> Rectangle {
         self.inner.bounding_box()
     }
+}
+
+impl<DI: DisplayInterface> HintRefresh for Display<DI> {
+    fn hint_refresh(&mut self) {}
 }
 
 impl<DI: DisplayInterface> DrawTarget for Display<DI> {

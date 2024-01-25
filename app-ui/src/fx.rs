@@ -1,10 +1,10 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::Dimensions;
-use embedded_graphics::pixelcolor::{Rgb565, RgbColor, IntoStorage};
+use embedded_graphics::pixelcolor::{IntoStorage, Rgb565, RgbColor};
 use embedded_graphics::primitives::{PointsIter, Rectangle};
 use embedded_graphics::Pixel;
 
-use crate::AppDrawTarget;
+use crate::{AppDrawTarget, HintRefresh};
 
 pub struct FX<'a, DT: AppDrawTarget<E>, E> {
     target: &'a mut DT,
@@ -39,10 +39,10 @@ impl<'a, DT: AppDrawTarget<E>, E> FX<'a, DT, E> {
 
     fn map_pixel(mut p: Pixel<Rgb565>, params: FXParams) -> Rgb565 {
         if p.1.into_storage() == 0 {
-            return p.1
+            return p.1;
         }
         let is_odd = (p.0.x % 2 == 1) ^ (p.0.y % 2 == 1) ^ (params.t % 2 == 1);
-        const D: u16 =50;
+        const D: u16 = 50;
         const DR: u8 = (D * Rgb565::MAX_R as u16 / 255) as u8;
         const DG: u8 = (D * Rgb565::MAX_G as u16 / 255) as u8;
         const DB: u8 = (D * Rgb565::MAX_B as u16 / 255) as u8;
@@ -73,7 +73,11 @@ impl FXParams {
     }
 }
 
-impl<'a, E, DT: DrawTarget<Color = Rgb565, Error = E>> DrawTarget for FX<'a, DT, E> {
+impl<'a, E, DT: DrawTarget<Color = Rgb565, Error = E> + HintRefresh> HintRefresh for FX<'a, DT, E> {
+    fn hint_refresh(&mut self) {}
+}
+
+impl<'a, E, DT: DrawTarget<Color = Rgb565, Error = E> + HintRefresh> DrawTarget for FX<'a, DT, E> {
     type Color = Rgb565;
     type Error = E;
 
