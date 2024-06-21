@@ -26,6 +26,7 @@ mod app {
     use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
     use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
+    use fugit::ExtU32;
     use hal::adc::config::Resolution;
     use hal::gpio::{Edge, ErasedPin, Input, Output};
     #[cfg(usb)]
@@ -38,8 +39,8 @@ mod app {
     use ouroboros::self_referencing;
     use rotary_encoder_embedded::standard::StandardMode;
     use rotary_encoder_embedded::{Direction, RotaryEncoder};
-    use rtic_monotonics::create_systick_token;
     use rtic_monotonics::systick::Systick;
+    use rtic_monotonics::{create_systick_token, Monotonic};
     use rtic_sync::channel::{Receiver, Sender};
     use rtic_sync::make_channel;
     #[cfg(usb)]
@@ -141,6 +142,7 @@ mod app {
         led_pin: ErasedPin<Output>,
         beeper: Beeper,
         rotary: RotaryEncoder<StandardMode, ErasedPin<Input>, ErasedPin<Input>>,
+        measurement_button_last_pressed: <Systick as Monotonic>::Instant,
     }
 
     #[cfg(usb)]
@@ -270,6 +272,7 @@ mod app {
                 led_pin: led_pin.erase(),
                 beeper,
                 rotary,
+                measurement_button_last_pressed: Systick::now(),
             },
         )
     }
@@ -283,8 +286,8 @@ mod app {
                 Direction::None => (),
                 x => {
                     let d: isize = match x {
-                        Direction::Anticlockwise => 1,
-                        Direction::Clockwise => -1,
+                        Direction::Clockwise => 1,
+                        Direction::Anticlockwise => -1,
                         _ => 0,
                     };
 
@@ -354,8 +357,14 @@ mod app {
     }
 
     // HWCONFIG
-    #[task(binds = EXTI2, shared = [app_mode, beep_sender, selected_menu_option], local=[measure_button_pin, led_pin], priority = 4)]
+    #[task(binds = EXTI2, shared = [app_mode, beep_sender, selected_menu_option], local=[measure_button_pin, measurement_button_last_pressed, led_pin], priority = 4)]
     fn measure_button_press(mut cx: measure_button_press::Context) {
+        if (Systick::now() - *cx.local.measurement_button_last_pressed).to_millis() < 100 {
+            cx.local.measure_button_pin.clear_interrupt_pending_bit();
+            return;
+        }
+        *cx.local.measurement_button_last_pressed = Systick::now();
+
         cx.shared.beep_sender.lock(|beep_sender| {
             let _ = beep_sender.try_send(Chirp::Button);
         });
@@ -364,10 +373,12 @@ mod app {
             .selected_menu_option
             .lock(|selected_menu_option| *selected_menu_option);
         cx.shared.app_mode.lock(|app_mode| match *app_mode {
+            AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
+                *app_mode = AppMode::Start;
+            }
             AppMode::Menu => match selected_option {
                 0 => {
                     let _ = measure_task::spawn();
-                    // *app_mode = AppMode::Start;
                 }
                 1 => {
                     let _ = debug_task::spawn();
@@ -378,11 +389,8 @@ mod app {
                 }
                 _ => (),
             },
-            AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
-                *app_mode = AppMode::Start;
-            }
-            AppMode::Update => (),
-            _ => {
+            AppMode::Update | AppMode::None => (),
+            AppMode::Start | AppMode::Results => {
                 let _ = measure_task::spawn();
             }
         });

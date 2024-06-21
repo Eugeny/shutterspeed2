@@ -147,7 +147,6 @@ macro_rules! setup_display {
 macro_rules! beeper_type {
     () => {
         use embedded_time::rate::Hertz;
-        use $crate::fugit::ExtU32;
         use $crate::hal::pac::TIM4;
         use $crate::hal::timer::{ChannelBuilder, PwmHz};
 
