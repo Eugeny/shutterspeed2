@@ -110,13 +110,14 @@ impl<const LEN: usize> SamplingBuffer<LEN> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MeasurementResult {
     pub duration_micros: u64,
     pub integrated_duration_micros: u64,
     pub sample_buffer: RingBuffer,
     pub samples_since_start: usize,
     pub samples_since_end: usize,
+    pub sample_rate: SamplingRate,
 }
 
 pub struct Measurement<M: LaxMonotonic> {
@@ -175,6 +176,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                 integrated_duration_micros: ms as u64 * 1000,
                 samples_since_start: 0,
                 samples_since_end: 0,
+                sample_rate: SamplingRate::new(1),
             }),
         }
     }
@@ -202,8 +204,8 @@ impl<M: LaxMonotonic> Measurement<M> {
                             .map(|(i, _)| i)
                             .unwrap_or(0);
 
-                    // Immediately integrated any samples since then
-                    // TODO maybe move this calculation to the end
+                    // Immediately integrate any samples since then
+                    // TODO maybe move this calculation to the end for perf
                     let integrated_samples = self.head_buffer.len() - last_index_above_trigger;
                     let integrated = self
                         .head_buffer
@@ -324,6 +326,7 @@ impl<M: LaxMonotonic> Measurement<M> {
                         samples_since_start: *samples_since_start,
                         samples_since_end: *samples_since_end,
                         sample_buffer: final_buffer,
+                        sample_rate: sample_rate.clone(),
                     });
                 }
             }
@@ -333,6 +336,13 @@ impl<M: LaxMonotonic> Measurement<M> {
 
     pub fn take_result(self) -> Option<MeasurementResult> {
         match self.state {
+            MeasurementState::Done(result) => Some(result),
+            _ => None,
+        }
+    }
+
+    pub fn result(&self) -> Option<&MeasurementResult> {
+        match &self.state {
             MeasurementState::Done(result) => Some(result),
             _ => None,
         }

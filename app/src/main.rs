@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 #![feature(type_alias_impl_trait)]
-#![feature(associated_type_bounds)]
 #![feature(iter_array_chunks)]
 #![feature(sync_unsafe_cell)]
 
@@ -15,6 +14,7 @@ mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
     use core::panic;
+    use core::ptr::addr_of_mut;
 
     use app_measurements::{CalibrationState, CycleCounterClock, Measurement};
     use app_ui::{
@@ -22,20 +22,22 @@ mod app {
         Screen, Screens, StartScreen, UpdateScreen,
     };
     use config::{self as hw, hal, AllGpio};
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     use cortex_m::peripheral::NVIC;
     use cortex_m_microclock::CYCCNTClock;
+    use embedded_alloc::Heap;
     use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
     use fugit::ExtU32;
     use hal::adc::config::Resolution;
     use hal::gpio::{Edge, ErasedPin, Input, Output};
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
     use hal::pac;
     use hal::prelude::*;
     use hal::timer::Flag;
+    use heapless::String;
     use mipidsi::Error as MipidsiError;
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     use ouroboros::self_referencing;
     use rotary_encoder_embedded::standard::StandardMode;
     use rotary_encoder_embedded::{Direction, RotaryEncoder};
@@ -43,11 +45,13 @@ mod app {
     use rtic_monotonics::{create_systick_token, Monotonic};
     use rtic_sync::channel::{Receiver, Sender};
     use rtic_sync::make_channel;
-    #[cfg(usb)]
+    use stm32f4xx_hal::pac::Interrupt;
+    use ufmt::uwrite;
+    #[cfg(feature = "usb")]
     use usb_device::class_prelude::UsbBusAllocator;
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     use usbd_serial::SerialPort;
 
     use crate::display::Display;
@@ -71,20 +75,22 @@ mod app {
     }
 
     #[self_referencing]
-    #[cfg(usb)]
     pub struct UsbDevices {
+        #[cfg(feature = "usb")]
         bus: UsbBusAllocator<UsbBus<USB>>,
 
         #[borrows(bus)]
         #[covariant]
+        #[cfg(feature = "usb")]
         pub serial: SerialPort<'this, UsbBus<USB>>,
 
         #[borrows(bus)]
         #[covariant]
+        #[cfg(feature = "usb")]
         pub device: UsbDevice<'this, UsbBus<USB>>,
     }
 
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     impl UsbDevices {
         pub fn make(bus: UsbBusAllocator<UsbBus<USB>>) -> Self {
             let usb = UsbDevicesBuilder {
@@ -114,11 +120,18 @@ mod app {
         }
     }
 
-    #[cfg(usb)]
     type UsbDevicesImpl = UsbDevices;
 
-    #[cfg(not(usb))]
-    type UsbDevicesImpl = ();
+    macro_rules! serial_log {
+        ($usb_devices: expr, $slice: expr) => {
+            #[cfg(feature = "usb")]
+            $usb_devices.lock(|usb| {
+                usb.with_serial_mut(|serial| {
+                    let _ = serial.write($slice);
+                })
+            });
+        };
+    }
 
     #[shared]
     struct Shared {
@@ -129,9 +142,9 @@ mod app {
         calibration_state: CalibrationState,
         measurement: Measurement<CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
-        usb_devices: UsbDevicesImpl,
         beep_sender: Sender<'static, Chirp, 1>,
         selected_menu_option: usize,
+        usb_devices: UsbDevicesImpl,
     }
 
     #[local]
@@ -145,11 +158,21 @@ mod app {
         measurement_button_last_pressed: <Systick as Monotonic>::Instant,
     }
 
-    #[cfg(usb)]
+    #[cfg(feature = "usb")]
     static mut USB_EP_MEMORY: [u32; 1024] = [0; 1024];
+
+    #[global_allocator]
+    static HEAP: Heap = Heap::empty();
 
     #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
     fn init(mut cx: init::Context) -> (Shared, Local) {
+        {
+            use core::mem::MaybeUninit;
+            const HEAP_SIZE: usize = 1024;
+            static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+            unsafe { HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
+        }
+
         let mut dp: pac::Peripherals = cx.device;
 
         let gpio = AllGpio {
@@ -213,13 +236,11 @@ mod app {
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
-        #[cfg(usb)]
-        usb_task::spawn().unwrap();
         led_pin.set_low();
 
         let display = UnsafeCell::new(display);
 
-        #[cfg(usb)]
+        #[cfg(feature = "usb")]
         let usb_bus = UsbBusType::new(
             USB {
                 usb_global: dp.OTG_FS_GLOBAL,
@@ -229,12 +250,15 @@ mod app {
                 pin_dp: hw::usb_dp_pin!(gpio).into(),
                 hclk: clocks.hclk(),
             },
-            unsafe { &mut USB_EP_MEMORY },
+            unsafe { &mut *addr_of_mut!(USB_EP_MEMORY) },
         );
 
         let beeper = config::setup_sound_pwm!(dp, gpio, &clocks);
         let (beep_tx, beep_rx) = make_channel!(Chirp, 1);
         beeper_task::spawn(beep_rx).unwrap();
+
+        #[cfg(feature = "usb")]
+        usb_task::spawn().unwrap();
 
         let rotary = RotaryEncoder::new(
             hw::rotary_dt_pin!(gpio).into_pull_up_input().erase(),
@@ -258,10 +282,8 @@ mod app {
                     hw::TRIGGER_THRESHOLD_HIGH,
                 ),
                 display,
-                #[cfg(usb)]
+                #[cfg(feature = "usb")]
                 usb_devices: UsbDevices::make(usb_bus),
-                #[cfg(not(usb))]
-                usb_devices: (),
                 beep_sender: beep_tx,
                 selected_menu_option: 0,
             },
@@ -277,7 +299,7 @@ mod app {
         )
     }
 
-    #[task(local=[rotary], shared=[app_mode, selected_menu_option], priority=2)]
+    #[task(local=[rotary], shared=[app_mode, selected_menu_option, usb_devices], priority=2)]
     async fn rotary_encoder_task(mut cx: rotary_encoder_task::Context) {
         let encoder = cx.local.rotary;
         loop {
@@ -285,6 +307,8 @@ mod app {
             match encoder.direction() {
                 Direction::None => (),
                 x => {
+                    serial_log!(cx.shared.usb_devices, b"turned\r\n");
+
                     let d: isize = match x {
                         Direction::Clockwise => 1,
                         Direction::Anticlockwise => -1,
@@ -433,8 +457,11 @@ mod app {
             );
     }
 
-    #[task(shared=[app_mode, adc_value, calibration_state, measurement, beep_sender], priority=2)]
+    #[task(shared=[app_mode, adc_value, calibration_state, measurement, beep_sender, usb_devices], priority=2)]
     async fn measure_task(mut cx: measure_task::Context) {
+        #[cfg(feature = "usb")]
+        let mut usb_devices = cx.shared.usb_devices;
+
         cx.shared.app_mode.lock(|app_mode| {
             *app_mode = AppMode::Calibrating;
         });
@@ -453,6 +480,14 @@ mod app {
         });
 
         let calibration_value = cx.shared.calibration_state.lock(|state| state.finish());
+
+        #[cfg(feature = "usb")]
+        {
+            let mut s = String::<128>::default();
+            uwrite!(s, "Calibrated to: {}\r\n", calibration_value).unwrap();
+            serial_log!(usb_devices, s.as_bytes());
+        }
+
         cx.shared.measurement.lock(|measurement| {
             *measurement = Measurement::new(
                 calibration_value,
@@ -482,6 +517,55 @@ mod app {
             Systick::delay(100.millis()).await;
         }
 
+        #[cfg(feature = "usb")]
+        cx.shared.measurement.lock(|measurement| {
+            if let Some(result) = measurement.result() {
+                serial_log!(usb_devices, b"Result: \r\n");
+
+                let mut s = String::<128>::default();
+                uwrite!(s, "Raw start-end time: {} us\r\n", result.duration_micros).unwrap();
+                serial_log!(usb_devices, s.as_bytes());
+
+                let mut s = String::<128>::default();
+                uwrite!(
+                    s,
+                    "Integrated time: {} us\r\n",
+                    result.integrated_duration_micros
+                )
+                .unwrap();
+                serial_log!(usb_devices, s.as_bytes());
+
+                let mut s = String::<128>::default();
+                uwrite!(s, "Sample rate at the end: 1/{}\r\n", result.sample_rate.divisor()).unwrap();
+                serial_log!(usb_devices, s.as_bytes());
+
+                let mut s = String::<128>::default();
+                uwrite!(s, "Samples since start: {}\r\n", result.samples_since_start).unwrap();
+                serial_log!(usb_devices, s.as_bytes());
+
+                let mut s = String::<128>::default();
+                uwrite!(s, "Samples since end: {}\r\n", result.samples_since_end).unwrap();
+                serial_log!(usb_devices, s.as_bytes());
+
+                let l = result.sample_buffer.len();
+                for (index, item) in result.sample_buffer.oldest_ordered().enumerate() {
+                    if index == l - result.samples_since_end {
+                        serial_log!(usb_devices, b"** end **\r\n");
+                    }
+
+                    let mut s = String::<128>::default();
+                    uwrite!(s, "- {}\r\n", item).unwrap();
+                    serial_log!(usb_devices, s.as_bytes());
+
+                    if index == l - result.samples_since_start {
+                        serial_log!(usb_devices, b"** start **\r\n");
+                    }
+                }
+
+                serial_log!(usb_devices, b"\r\n");
+            }
+        });
+
         cx.shared.beep_sender.lock(|beep_sender| {
             let _ = beep_sender.try_send(Chirp::Done);
         });
@@ -506,8 +590,8 @@ mod app {
         });
     }
 
+    #[cfg(feature = "usb")]
     fn handle_usb_activity(_usb: &mut UsbDevicesImpl) {
-        #[cfg(usb)]
         _usb.with_serial_mut(|serial| {
             let mut buf = [0; 64];
             match serial.read(&mut buf) {
@@ -522,13 +606,16 @@ mod app {
 
     #[task(binds=OTG_FS, shared=[usb_devices])]
     fn usb_interrupt(cx: usb_interrupt::Context) {
-        let mut usb = cx.shared.usb_devices;
-        usb.lock(handle_usb_activity);
+        #[cfg(feature = "usb")]
+        {
+            let mut usb = cx.shared.usb_devices;
+            usb.lock(handle_usb_activity);
+        }
     }
 
     #[task(shared=[usb_devices], priority=1)]
     async fn usb_task(_cx: usb_task::Context) {
-        #[cfg(usb)]
+        #[cfg(feature = "usb")]
         {
             let mut usb = _cx.shared.usb_devices;
             loop {

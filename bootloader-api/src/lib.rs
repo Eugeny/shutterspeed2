@@ -1,5 +1,7 @@
 #![no_std]
 
+use core::ptr::{addr_of, addr_of_mut};
+
 extern "C" {
     static mut BOOTLOADER_FLAGS: u32;
     static mut APP_START: u32;
@@ -13,11 +15,11 @@ pub unsafe fn app_ptr() -> *const u32 {
 }
 
 fn read_flag() -> u32 {
-    unsafe { core::ptr::read_volatile(&BOOTLOADER_FLAGS) }
+    unsafe { core::ptr::read_volatile(addr_of!(BOOTLOADER_FLAGS)) }
 }
 
 fn write_flag(flags: u32) {
-    unsafe { core::ptr::write_volatile(&mut BOOTLOADER_FLAGS, flags) }
+    unsafe { core::ptr::write_volatile(addr_of_mut!(BOOTLOADER_FLAGS), flags) }
 }
 
 pub fn reset_bootloader_flags() {
