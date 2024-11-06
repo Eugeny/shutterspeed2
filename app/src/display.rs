@@ -7,15 +7,15 @@ use embedded_graphics::geometry::Dimensions;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::Pixel;
-use hw::display_interface_spi::SPIInterfaceNoCS;
+use hw::display_interface_spi::SPIInterface;
 use hw::hal::gpio::{ErasedPin, Output};
 use mipidsi::models::ST7735s;
 
-pub trait DisplayInterface: embedded_hal::blocking::spi::Write<u8> {}
-impl<W: embedded_hal::blocking::spi::Write<u8>> DisplayInterface for W {}
+pub trait DisplayInterface: embedded_hal::spi::SpiDevice<u8> {}
+impl<W: embedded_hal::spi::SpiDevice<u8>> DisplayInterface for W {}
 
 pub struct Display<DI: DisplayInterface> {
-    inner: mipidsi::Display<SPIInterfaceNoCS<DI, ErasedPin<Output>>, ST7735s, ErasedPin<Output>>,
+    inner: mipidsi::Display<SPIInterface<DI, ErasedPin<Output>>, ST7735s, ErasedPin<Output>>,
     backlight_pin: ErasedPin<Output>,
     fx_params: FXParams,
 }
@@ -23,7 +23,7 @@ pub struct Display<DI: DisplayInterface> {
 impl<DI: DisplayInterface> Display<DI> {
     pub fn new(
         inner: mipidsi::Display<
-            SPIInterfaceNoCS<DI, ErasedPin<Output>>,
+            SPIInterface<DI, ErasedPin<Output>>,
             ST7735s,
             ErasedPin<Output>,
         >,
@@ -75,7 +75,7 @@ impl<DI: DisplayInterface> HintRefresh for Display<DI> {
 
 impl<DI: DisplayInterface> DrawTarget for Display<DI> {
     type Color = Rgb565;
-    type Error = mipidsi::Error;
+    type Error = mipidsi::error::Error;
 
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
     where

@@ -23,6 +23,7 @@ cortex-m-rt = { workspace = true, features = ["set-sp", "set-vtor"] }
 cortex-m.workspace = true
 cortex-m-semihosting.workspace = true
 embedded-hal.workspace = true
+embedded-hal-bus.workspace = true
 stm32f4xx-hal.workspace = true
 
 micromath.workspace = true

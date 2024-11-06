@@ -40,7 +40,7 @@ pub const SYSCLK: u32 = 84_000_000;
 pub const HCLK: u32 = 42_000_000;
 pub const SPI_FREQ_HZ: u32 = 10_000_000;
 
-pub type DisplaySpiType = Spi<SPI1>;
+pub type DisplaySpiType = ExclusiveDevice<Spi<SPI1>, ErasedPin<Output>, NoDelay>;
 pub type DmaTransfer = Transfer<Stream0<DMA2>, 0, Adc<ADC1>, PeripheralToMemory, &'static mut u16>;
 pub type AdcTimerType = CounterHz<TIM2>;
 
@@ -123,30 +123,38 @@ macro_rules! delay_timer {
 #[macro_export]
 macro_rules! setup_display_spi {
     ($dp:expr, $gpio:expr, $clocks:expr) => {{
+        use embedded_hal_bus;
         use $crate::fugit::RateExtU32;
         use $crate::hal::spi::Spi;
 
         let mut sclk_pin = hw::display_sclk_pin!($gpio).into_alternate();
         let mut miso_pin = hw::display_miso_pin!($gpio).into_alternate();
         let mut mosi_pin = hw::display_mosi_pin!($gpio).into_alternate();
+        let mut dummy_cs_pin = hw::display_dummy_cs_pin!($gpio).into_push_pull_output();
         sclk_pin.set_speed(Speed::VeryHigh);
         miso_pin.set_speed(Speed::VeryHigh);
         mosi_pin.set_speed(Speed::VeryHigh);
 
-        Spi::new(
+        let bus = Spi::new(
             $dp.SPI1,
             (sclk_pin, miso_pin, mosi_pin),
             embedded_hal::spi::MODE_3,
             $crate::SPI_FREQ_HZ.Hz(),
             &$clocks,
+        );
+        embedded_hal_bus::spi::ExclusiveDevice::new(
+            bus,
+            dummy_cs_pin.erase(),
+            embedded_hal_bus::spi::NoDelay,
         )
+        .unwrap()
     }};
 }
 
 #[macro_export]
 macro_rules! setup_display {
     ($dp:expr, $gpio:expr, $clocks:expr, $delay:expr) => {{
-        use $crate::display_interface_spi::SPIInterfaceNoCS;
+        use $crate::display_interface_spi::SPIInterface;
         use $crate::hal::gpio::{Edge, ErasedPin, Input, Output, Speed};
         let spi = $crate::setup_display_spi!($dp, $gpio, $clocks);
         let mut dc_pin = $crate::display_dc_pin!($gpio).into_push_pull_output();
@@ -154,12 +162,15 @@ macro_rules! setup_display {
         dc_pin.set_speed(Speed::VeryHigh);
         rst_pin.set_speed(Speed::VeryHigh);
 
-        let di = SPIInterfaceNoCS::new(spi, dc_pin.erase());
-        mipidsi::Builder::st7735s(di)
-            .with_orientation(mipidsi::Orientation::Portrait(false))
-            .with_invert_colors(mipidsi::ColorInversion::Normal)
-            .with_display_size(128, 160)
-            .init($delay, Some(rst_pin.erase()))
+        let di = SPIInterface::new(spi, dc_pin.erase());
+        mipidsi::Builder::new(mipidsi::models::ST7735s, di)
+            .reset_pin(rst_pin.erase())
+            .orientation(
+                mipidsi::options::Orientation::new().rotate(mipidsi::options::Rotation::Deg180),
+            )
+            .display_offset(0, 0)
+            .display_size(132, 162)
+            .init($delay)
     }};
 }
 
@@ -226,6 +237,7 @@ pin_macro!($ display_sclk_pin, a, pa5);
 pin_macro!($ display_miso_pin, a, pa6);
 pin_macro!($ display_mosi_pin, a, pa7);
 pin_macro!($ display_backlight_pin, b, pb9);
+pin_macro!($ display_dummy_cs_pin, b, pb10);
 
 pin_macro!($ adc_pin, a, pa1);
 
@@ -243,6 +255,7 @@ pin_macro!($ accessory_sense_pin, a, pa3);
 pin_macro!($ accessory_idle_signal, b, pb8);
 
 use app_measurements::TriggerThresholds;
+use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
 use fugit::RateExtU32;
 use hal::adc::config::{Dma, Resolution, SampleTime};
 use hal::adc::Adc;
@@ -253,3 +266,4 @@ use hal::rcc::Clocks;
 use hal::spi::Spi;
 use hal::timer::{CounterHz, TimerExt};
 use hal::Listen;
+use stm32f4xx_hal::gpio::{ErasedPin, Output};

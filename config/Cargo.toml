@@ -12,7 +12,9 @@ forced-target = "thumbv7m-none-eabi"
 
 [dependencies]
 stm32f4xx-hal.workspace = true
+mipidsi.workspace = true
 fugit.workspace = true
 display-interface-spi.workspace = true
 embedded-time.workspace = true
 app-measurements = { version = "0.1.0", path = "../app-measurements" }
+embedded-hal-bus.workspace = true

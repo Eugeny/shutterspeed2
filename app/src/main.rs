@@ -14,6 +14,7 @@ mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
     use core::panic;
+    #[cfg(feature = "usb")]
     use core::ptr::addr_of_mut;
 
     use app_measurements::{CalibrationState, CycleCounterClock, Measurement};
@@ -35,7 +36,7 @@ mod app {
     use hal::prelude::*;
     use hal::timer::Flag;
     use heapless::String;
-    use mipidsi::Error as MipidsiError;
+    use mipidsi::error::Error as MipidsiError;
     use ouroboros::self_referencing;
     use rotary_encoder_embedded::standard::StandardMode;
     use rotary_encoder_embedded::{Direction, RotaryEncoder};
@@ -235,7 +236,9 @@ mod app {
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
         let mut acc_sense_pin = hw::accessory_sense_pin!(gpio).into_pull_down_input();
-        let mut acc_idle_pin = hw::accessory_idle_signal!(gpio).into_pull_down_input();
+        let mut acc_idle_pin = hw::accessory_idle_signal!(gpio).into_push_pull_output();
+
+        acc_idle_pin.set_high();
 
         led_pin.set_low();
 
