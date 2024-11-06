@@ -377,6 +377,8 @@ dependencies = [
 [[package]]
 name = "infinity-sampler"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "233883d07a9e179a15916c22d2d471466fed4fba7a33751c5033af0f29c80e19"
 dependencies = [
  "heapless",
 ]

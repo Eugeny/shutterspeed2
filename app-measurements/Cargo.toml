@@ -14,8 +14,8 @@ fugit.workspace = true
 rtic-monotonics = { workspace = true, optional = true }
 cortex-m-microclock = { workspace = true, optional = true }
 micromath.workspace = true
-# infinity-sampler = "0.1.1"
-infinity-sampler = { version = "0.3.0", path = "../../infinity-sampler" }
+infinity-sampler = "0.3.0"
+# infinity-sampler = { version = "0.3.0", path = "../../infinity-sampler" }
 
 [features]
 cortex-m = ["cortex-m-microclock", "rtic-monotonics"]

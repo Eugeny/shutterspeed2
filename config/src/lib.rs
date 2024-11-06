@@ -11,9 +11,28 @@ mod macros;
 // TIM4 -> sound PWM
 
 pub const CALIBRATION_TIME_MS: u32 = 1000;
-pub const TRIGGER_THRESHOLD_LOW: f32 = 1.3;
-pub const TRIGGER_THRESHOLD_HIGH: f32 = 1.5;
-pub const ADC_RESOLUTION: Resolution = Resolution::Eight;
+
+pub const TRIGGER_THRESHOLDS: TriggerThresholds = TriggerThresholds {
+    low_ratio: 1.0,
+    high_ratio: 1.0,
+    low_delta: ADC_RANGE / 16u16,
+    high_delta: ADC_RANGE / 8u16,
+};
+
+// pub const TRIGGER_THRESHOLDS: TriggerThresholds = TriggerThresholds {
+//     low_ratio: 1.8,
+//     high_ratio: 2.0,
+//     low_delta: 0,
+//     high_delta: 0,
+// };
+
+pub const ADC_RESOLUTION: Resolution = Resolution::Twelve;
+pub const ADC_RANGE: u16 = 2u16.pow(match ADC_RESOLUTION {
+    Resolution::Six => 6,
+    Resolution::Eight => 8,
+    Resolution::Ten => 10,
+    Resolution::Twelve => 12,
+});
 
 pub const SAMPLE_TIME: SampleTime = SampleTime::Cycles_3;
 pub const SAMPLE_RATE_HZ: u32 = 100_000_u32;
@@ -57,7 +76,7 @@ macro_rules! setup_adc_timer {
     }};
 }
 
-pub fn _setup_adc(adc: ADC1, adc_pin: Pin<'A', 0, Analog>) -> Adc<ADC1> {
+pub fn _setup_adc(adc: ADC1, adc_pin: Pin<'A', 1, Analog>) -> Adc<ADC1> {
     use hal::adc::config::{AdcConfig, Clock, Scan, Sequence};
 
     let adc_config = AdcConfig::default()
@@ -74,7 +93,8 @@ pub fn _setup_adc(adc: ADC1, adc_pin: Pin<'A', 0, Analog>) -> Adc<ADC1> {
 #[macro_export]
 macro_rules! setup_adc {
     ($dp:expr, $gpio:expr) => {{
-        $crate::_setup_adc($dp.ADC1, $gpio.a.pa0.into_analog())
+        let pin = $crate::adc_pin!($gpio);
+        $crate::_setup_adc($dp.ADC1, pin.into_analog())
     }};
 }
 
@@ -151,7 +171,7 @@ macro_rules! beeper_type {
         use $crate::hal::timer::{ChannelBuilder, PwmHz};
 
         pub struct Beeper {
-            pwm: PwmHz<TIM4, ChannelBuilder<TIM4, 2>>,
+            pwm: PwmHz<TIM4, ChannelBuilder<TIM4, 0>>,
         }
 
         impl BeeperExt for Beeper {
@@ -159,20 +179,20 @@ macro_rules! beeper_type {
                 use hal::timer::Channel;
 
                 self.pwm.set_period((frequency as u32).Hz());
-                self.pwm.enable(Channel::C3);
+                self.pwm.enable(Channel::C1);
             }
 
             fn disable(&mut self) {
                 use hal::timer::Channel;
                 self.pwm.set_period(10.Hz());
-                self.pwm.enable(Channel::C3);
-                self.pwm.disable(Channel::C3);
+                self.pwm.enable(Channel::C1);
+                self.pwm.disable(Channel::C1);
             }
 
             fn set_duty_percent(&mut self, duty_percent: u8) {
                 use hal::timer::Channel;
                 self.pwm.set_duty(
-                    Channel::C3,
+                    Channel::C1,
                     (self.pwm.get_max_duty() * duty_percent as u16) / 100,
                 );
             }
@@ -185,10 +205,10 @@ macro_rules! setup_sound_pwm {
     ($dp:expr, $gpio:expr, $clocks:expr) => {{
         use hal::timer::Channel;
 
-        let mut buzzer_pin = $gpio.b.pb8.into_alternate();
-        let ch = hal::timer::pwm::Channel3::new(buzzer_pin);
+        let mut buzzer_pin = $gpio.b.pb6.into_alternate();
+        let ch = hal::timer::pwm::Channel1::new(buzzer_pin);
         let mut pwm = $dp.TIM4.pwm_hz(ch, 550.Hz(), $clocks);
-        pwm.set_duty(Channel::C3, pwm.get_max_duty() / 2);
+        pwm.set_duty(Channel::C1, pwm.get_max_duty() / 2);
 
         Beeper { pwm }
     }};
@@ -207,7 +227,7 @@ pin_macro!($ display_miso_pin, a, pa6);
 pin_macro!($ display_mosi_pin, a, pa7);
 pin_macro!($ display_backlight_pin, b, pb9);
 
-pin_macro!($ adc_pin, a, pa0);
+pin_macro!($ adc_pin, a, pa1);
 
 pin_macro!($ led_pin, c, pc13);
 
@@ -216,9 +236,13 @@ pin_macro!($ measure_button_pin, a, pa2);
 pin_macro!($ usb_dm_pin, a, pa11);
 pin_macro!($ usb_dp_pin, a, pa12);
 
-pin_macro!($ rotary_dt_pin, c, pc14);
-pin_macro!($ rotary_clk_pin, c, pc15);
+pin_macro!($ rotary_dt_pin, c, pc15);
+pin_macro!($ rotary_clk_pin, c, pc14);
 
+pin_macro!($ accessory_sense_pin, a, pa3);
+pin_macro!($ accessory_idle_signal, b, pb8);
+
+use app_measurements::TriggerThresholds;
 use fugit::RateExtU32;
 use hal::adc::config::{Dma, Resolution, SampleTime};
 use hal::adc::Adc;

@@ -1,5 +1,6 @@
 use core::fmt::{Debug, Write};
 
+use app_measurements::TriggerThresholds;
 use eg_seven_segment::SevenSegmentStyleBuilder;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
@@ -128,18 +129,13 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
 }
 
 impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
-    pub fn new(
-        calibration: u16,
-        trigger_threshold_low: f32,
-        trigger_threshold_high: f32,
-        max_value: u16,
-    ) -> Self {
+    pub fn new(calibration: u16, trigger_thresholds: TriggerThresholds, max_value: u16) -> Self {
         Self {
             adc_history: HistoryBuffer::new(),
             is_triggered: false,
             calibration,
-            threshold_low: (calibration as f32 * trigger_threshold_low) as u16,
-            threshold_high: (calibration as f32 * trigger_threshold_high) as u16,
+            threshold_low: trigger_thresholds.trigger_low(calibration),
+            threshold_high: trigger_thresholds.trigger_high(calibration),
             max_value,
             _phantom: core::marker::PhantomData,
         }

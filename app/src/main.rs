@@ -30,14 +30,12 @@ mod app {
     use fugit::ExtU32;
     use hal::adc::config::Resolution;
     use hal::gpio::{Edge, ErasedPin, Input, Output};
-    #[cfg(feature = "usb")]
     use hal::otg_fs::{UsbBus, UsbBusType, USB};
     use hal::pac;
     use hal::prelude::*;
     use hal::timer::Flag;
     use heapless::String;
     use mipidsi::Error as MipidsiError;
-    #[cfg(feature = "usb")]
     use ouroboros::self_referencing;
     use rotary_encoder_embedded::standard::StandardMode;
     use rotary_encoder_embedded::{Direction, RotaryEncoder};
@@ -47,11 +45,8 @@ mod app {
     use rtic_sync::make_channel;
     use stm32f4xx_hal::pac::Interrupt;
     use ufmt::uwrite;
-    #[cfg(feature = "usb")]
     use usb_device::class_prelude::UsbBusAllocator;
-    #[cfg(feature = "usb")]
     use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
-    #[cfg(feature = "usb")]
     use usbd_serial::SerialPort;
 
     use crate::display::Display;
@@ -76,17 +71,14 @@ mod app {
 
     #[self_referencing]
     pub struct UsbDevices {
-        #[cfg(feature = "usb")]
         bus: UsbBusAllocator<UsbBus<USB>>,
 
         #[borrows(bus)]
         #[covariant]
-        #[cfg(feature = "usb")]
         pub serial: SerialPort<'this, UsbBus<USB>>,
 
         #[borrows(bus)]
         #[covariant]
-        #[cfg(feature = "usb")]
         pub device: UsbDevice<'this, UsbBus<USB>>,
     }
 
@@ -120,7 +112,13 @@ mod app {
         }
     }
 
+    pub struct UsbDevicesStub;
+
+    #[cfg(feature = "usb")]
     type UsbDevicesImpl = UsbDevices;
+
+    #[cfg(not(feature = "usb"))]
+    type UsbDevicesImpl = UsbDevicesStub;
 
     macro_rules! serial_log {
         ($usb_devices: expr, $slice: expr) => {
@@ -188,11 +186,11 @@ mod app {
 
         // HWCONFIG
         // Workaround 1 enable prefetch
-        // {
-        //     dp.FLASH
-        //         .acr
-        //         .write(|w| w.prften().enabled().icen().enabled().dcen().enabled());
-        // }
+        {
+            dp.FLASH
+                .acr
+                .write(|w| w.prften().enabled().icen().enabled().dcen().enabled());
+        }
 
         // HWCONFIG
         // Workaround 2 AN4073 4.1 reduce ADC crosstalk
@@ -236,6 +234,9 @@ mod app {
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
+        let mut acc_sense_pin = hw::accessory_sense_pin!(gpio).into_pull_down_input();
+        let mut acc_idle_pin = hw::accessory_idle_signal!(gpio).into_pull_down_input();
+
         led_pin.set_low();
 
         let display = UnsafeCell::new(display);
@@ -278,12 +279,13 @@ mod app {
                 calibration_state: CalibrationState::Done(0),
                 measurement: Measurement::new(
                     0,
-                    hw::TRIGGER_THRESHOLD_LOW,
-                    hw::TRIGGER_THRESHOLD_HIGH,
+                    hw::TRIGGER_THRESHOLDS,
                 ),
                 display,
                 #[cfg(feature = "usb")]
                 usb_devices: UsbDevices::make(usb_bus),
+                #[cfg(not(feature = "usb"))]
+                usb_devices: UsbDevicesStub,
                 beep_sender: beep_tx,
                 selected_menu_option: 0,
             },
@@ -491,8 +493,7 @@ mod app {
         cx.shared.measurement.lock(|measurement| {
             *measurement = Measurement::new(
                 calibration_value,
-                hw::TRIGGER_THRESHOLD_LOW,
-                hw::TRIGGER_THRESHOLD_HIGH,
+                hw::TRIGGER_THRESHOLDS,
             );
         });
 
@@ -662,8 +663,7 @@ mod app {
                     AppMode::Debug => {
                         screen = Screens::Debug(DebugScreen::new(
                             cx.shared.calibration_state.lock(core::mem::take).finish(),
-                            hw::TRIGGER_THRESHOLD_LOW,
-                            hw::TRIGGER_THRESHOLD_HIGH,
+                            hw::TRIGGER_THRESHOLDS,
                             match hw::ADC_RESOLUTION {
                                 Resolution::Six => 63,
                                 Resolution::Eight => 255,
@@ -682,8 +682,7 @@ mod app {
                                     m,
                                     Measurement::new(
                                         Default::default(),
-                                        hw::TRIGGER_THRESHOLD_LOW,
-                                        hw::TRIGGER_THRESHOLD_HIGH,
+                                        hw::TRIGGER_THRESHOLDS,
                                     ),
                                 )
                             })
