@@ -5,7 +5,7 @@ use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::Drawable;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::fonts::{SMALL_FONT, TINY_FONT};
 use crate::primitives::Cross;
 use crate::AppDrawTarget;
@@ -56,7 +56,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for UpdateScreen<DT, E> {
             .unwrap();
     }
 
-    async fn draw_frame(&mut self, _display: &mut DT) {}
+    async fn draw_frame(&mut self, _display: &mut DT, _cx: DrawFrameContext) {}
 }
 
 impl<DT: AppDrawTarget<E>, E: Debug> Default for UpdateScreen<DT, E> {

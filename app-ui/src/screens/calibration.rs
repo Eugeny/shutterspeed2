@@ -3,7 +3,7 @@ use core::fmt::Debug;
 use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::{draw_badge, AppDrawTarget};
 
 pub struct CalibrationScreen<DT, E> {
@@ -24,7 +24,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for CalibrationScreen<DT, E> 
         .await;
     }
 
-    async fn draw_frame(&mut self, _display: &mut DT) {}
+    async fn draw_frame(&mut self, _display: &mut DT, _cx: DrawFrameContext) {}
 }
 
 impl<DT: AppDrawTarget<E>, E: Debug> Default for CalibrationScreen<DT, E> {

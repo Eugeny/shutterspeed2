@@ -2,8 +2,6 @@
 use cortex_m_microclock::CYCCNTClock;
 use heapless::HistoryBuffer;
 #[cfg(feature = "cortex-m")]
-use micromath::F32Ext;
-#[cfg(feature = "cortex-m")]
 use rtic_monotonics::systick::Systick;
 #[cfg(feature = "cortex-m")]
 use rtic_monotonics::Monotonic;

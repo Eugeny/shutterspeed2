@@ -156,19 +156,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07"
 
 [[package]]
-name = "blinker"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "cortex-m-semihosting",
- "embedded-hal 1.0.0",
- "fugit",
- "panic-abort",
- "stm32f4xx-hal",
-]
-
-[[package]]
 name = "bootloader"
 version = "0.1.0"
 dependencies = [

@@ -3,12 +3,8 @@ use core::fmt::Debug;
 use embedded_graphics::geometry::{Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use embedded_graphics::primitives::Rectangle;
-#[cfg(feature = "cortex-m")]
-use rtic_monotonics::systick::Systick;
-#[cfg(feature = "cortex-m")]
-use rtic_monotonics::Monotonic;
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::{draw_badge, AppDrawTarget};
 
 pub struct StartScreen<DT, E> {
@@ -29,11 +25,9 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for StartScreen<DT, E> {
         .await;
     }
 
-    async fn draw_frame(&mut self, display: &mut DT) {
-        #[cfg(feature = "cortex-m")]
-        let t = (Systick::now() - <Systick as rtic_monotonics::Monotonic>::ZERO).to_millis() / 500;
-        #[cfg(not(feature = "cortex-m"))]
-        let t = 0;
+    async fn draw_frame(&mut self, display: &mut DT, cx: DrawFrameContext) {
+        let t = cx.animation_time_ms / 500;
+
         let color = if t % 2 == 0 {
             Rgb565::WHITE
         } else {

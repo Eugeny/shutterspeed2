@@ -1,12 +1,11 @@
 use std::f32::consts::PI;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use app_measurements::{CalibrationState, MeasurementResult};
+use app_measurements::{CalibrationState, MeasurementResult, SamplingRate, TriggerThresholds};
 use app_ui::panic::draw_panic_screen;
 use app_ui::{
-    BootScreen, CalibrationScreen, DebugScreen, HintRefresh, MeasurementScreen,
-    MenuScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen,
+    BootScreen, CalibrationScreen, DebugScreen, DrawFrameContext, HintRefresh, MeasurementScreen, MenuScreen, NoAccessoryScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen
 };
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{OriginDimensions, Size};
@@ -66,8 +65,17 @@ async fn main() {
     screen.draw_init(&mut live_display).await;
     live_display.hint_refresh();
 
+    let t_start = Instant::now();
+
     'outer: loop {
-        screen.draw_frame(&mut live_display).await;
+        screen
+            .draw_frame(
+                &mut live_display,
+                DrawFrameContext {
+                    animation_time_ms: t_start.elapsed().as_millis() as u32,
+                },
+            )
+            .await;
         live_display.hint_refresh();
 
         if panic_visible {
@@ -127,6 +135,7 @@ async fn main() {
                                     sample_buffer,
                                     samples_since_end: margin + 30,
                                     samples_since_start: size - margin - 30,
+                                    sample_rate: SamplingRate::new(1),
                                 },
                             )
                             .into();
@@ -144,9 +153,22 @@ async fn main() {
                             panic_visible = true;
                         }
                         Keycode::I => {
-                            let mut ds = DebugScreen::new(50, 1.2, 1.5, 128);
+                            let mut ds = DebugScreen::new(
+                                50,
+                                TriggerThresholds {
+                                    high_ratio: 1.2,
+                                    low_ratio: 1.5,
+                                    high_delta: 0,
+                                    low_delta: 0,
+                                },
+                                128,
+                            );
                             ds.step(55);
                             screen = ds.into();
+                            need_init = true;
+                        }
+                        Keycode::O => {
+                            screen = NoAccessoryScreen::default().into();
                             need_init = true;
                         }
                         Keycode::Up => match screen {

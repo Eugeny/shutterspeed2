@@ -13,7 +13,7 @@ use heapless::{HistoryBuffer, String};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use ufmt::uwrite;
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::fonts::{SMALL_FONT, TINY_FONT};
 use crate::primitives::Pointer;
 use crate::{config as cfg, AppDrawTarget};
@@ -33,7 +33,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
         display.clear(Rgb565::BLACK).unwrap();
     }
 
-    async fn draw_frame(&mut self, display: &mut DT) {
+    async fn draw_frame(&mut self, display: &mut DT, cx: DrawFrameContext) {
         let recent_samples = self.adc_history.len().min(10);
         let (avg_adc_value, min_adc_value, max_adc_value) = {
             let recent_iter = || {

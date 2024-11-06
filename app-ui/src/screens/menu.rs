@@ -4,7 +4,7 @@ use embedded_graphics::geometry::Point;
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor, WebColors};
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::fonts::{SMALL_FONT, TINY_FONT};
 use crate::{config, AppDrawTarget};
 
@@ -15,7 +15,7 @@ pub struct MenuScreen<DT, E> {
     _phantom: core::marker::PhantomData<(DT, E)>,
 }
 
-const LABELS: [&str; 4] = [" MEASURE ", " DEBUG ", " SENSITIVITY ", " USB UPDATE "];
+const LABELS: [&str; 3] = [" MEASURE ", " DEBUG ", " USB UPDATE "];
 
 impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
     async fn draw_init(&mut self, display: &mut DT) {
@@ -41,7 +41,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
             .unwrap();
     }
 
-    async fn draw_frame(&mut self, display: &mut DT) {
+    async fn draw_frame(&mut self, display: &mut DT, cx: DrawFrameContext) {
         let bg = config::COLOR_BACKGROUND;
         let fg = config::COLOR_RESULT_VALUE;
 
@@ -75,7 +75,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
 
             if index == self.position {
                 match index {
-                    0 | 1 | 3 => {
+                    0 | 1 | 2 => {
                         SMALL_FONT
                             .render(
                                 ">",
@@ -89,38 +89,20 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
                             )
                             .unwrap();
                     }
-                    2 => {
-                        // let mut x_pos = 10;
-                        // for (index, label) in SENSITIVITY_LABELS.iter().enumerate() {
-                        //     let fg = config::COLOR_MENU_ACTION;
-                        //     let rect = SMALL_FONT
-                        //         .render(
-                        //             *label,
-                        //             Point::new(x_pos, y_pos),
-                        //             VerticalPosition::Top,
-                        //             if index == self.sensitivity as usize {
-                        //                 FontColor::WithBackground { fg: bg, bg: fg }
-                        //             } else {
-                        //                 FontColor::WithBackground { fg, bg }
-                        //             },
-                        //             display,
-                        //         )
-                        //         .unwrap();
-                        //     x_pos = rect.bounding_box.unwrap().bottom_right().unwrap().x;
-                        // }
-                        SMALL_FONT
-                            .render(
-                                ["1", "2", "3"][self.sensitivity as usize],
-                                Point::new(5, y_pos),
-                                VerticalPosition::Top,
-                                FontColor::WithBackground {
-                                    bg: config::COLOR_MENU_ACTION,
-                                    fg: config::COLOR_BACKGROUND,
-                                },
-                                display,
-                            )
-                            .unwrap();
-                    }
+                    // 2 => {
+                        // SMALL_FONT
+                        //     .render(
+                        //         ["1", "2", "3"][self.sensitivity as usize],
+                        //         Point::new(5, y_pos),
+                        //         VerticalPosition::Top,
+                        //         FontColor::WithBackground {
+                        //             bg: config::COLOR_MENU_ACTION,
+                        //             fg: config::COLOR_BACKGROUND,
+                        //         },
+                        //         display,
+                        //     )
+                        //     .unwrap();
+                    // }
                     _ => (),
                 }
             } else {

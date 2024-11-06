@@ -11,7 +11,7 @@ use heapless::String;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use ufmt::uwrite;
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::chart::draw_chart;
 use crate::fonts::{ALT_FONT, TINY_FONT};
 use crate::format::write_fraction;
@@ -46,7 +46,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for ResultsScreen<DT, E> {
         );
     }
 
-    async fn draw_frame(&mut self, display: &mut DT) {
+    async fn draw_frame(&mut self, display: &mut DT, _cx: DrawFrameContext) {
         let ss_origin = Point::new(display.bounding_box().center().x, 50);
         self.draw_shutter_speed(display, ss_origin);
         self.draw_deviation(display, ss_origin + Point::new(0, 60));

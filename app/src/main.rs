@@ -19,8 +19,8 @@ mod app {
 
     use app_measurements::{CalibrationState, CycleCounterClock, Measurement};
     use app_ui::{
-        BootScreen, CalibrationScreen, DebugScreen, MeasurementScreen, MenuScreen, ResultsScreen,
-        Screen, Screens, StartScreen, UpdateScreen,
+        BootScreen, CalibrationScreen, DebugScreen, DrawFrameContext, MeasurementScreen,
+        MenuScreen, NoAccessoryScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen,
     };
     use config::{self as hw, hal, AllGpio};
     #[cfg(feature = "usb")]
@@ -59,7 +59,7 @@ mod app {
     config::beeper_type!();
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum AppMode {
+    pub enum AppModeInner {
         None,
         Start,
         Calibrating,
@@ -67,7 +67,36 @@ mod app {
         Results,
         Debug,
         Update,
+        NoAccessory,
         Menu,
+    }
+
+    pub struct AppMode {
+        inner: AppModeInner,
+        acc_idle_pin: ErasedPin<Output>,
+    }
+
+    impl AppMode {
+        pub fn new(acc_idle_pin: ErasedPin<Output>) -> Self {
+            AppMode {
+                inner: AppModeInner::Start,
+                acc_idle_pin,
+            }
+        }
+
+        pub fn get(&self) -> AppModeInner {
+            self.inner
+        }
+
+        pub fn set(&mut self, mode: AppModeInner) {
+            self.inner = mode;
+            match mode {
+                AppModeInner::Calibrating | AppModeInner::Measure | AppModeInner::Debug => {
+                    self.acc_idle_pin.set_low()
+                }
+                _ => self.acc_idle_pin.set_high(),
+            }
+        }
     }
 
     #[self_referencing]
@@ -155,6 +184,7 @@ mod app {
         beeper: Beeper,
         rotary: RotaryEncoder<StandardMode, ErasedPin<Input>, ErasedPin<Input>>,
         measurement_button_last_pressed: <Systick as Monotonic>::Instant,
+        acc_sense_pin: ErasedPin<Input>,
     }
 
     #[cfg(feature = "usb")]
@@ -235,9 +265,8 @@ mod app {
         measure_button_pin.trigger_on_edge(&mut dp.EXTI, Edge::Rising);
         measure_button_pin.enable_interrupt(&mut dp.EXTI);
 
-        let mut acc_sense_pin = hw::accessory_sense_pin!(gpio).into_pull_down_input();
+        let acc_sense_pin = hw::accessory_sense_pin!(gpio).into_pull_down_input();
         let mut acc_idle_pin = hw::accessory_idle_signal!(gpio).into_push_pull_output();
-
         acc_idle_pin.set_high();
 
         led_pin.set_low();
@@ -272,18 +301,16 @@ mod app {
         rotary_encoder_task::spawn().unwrap();
 
         display_task::spawn().unwrap();
+        acc_sense_task::spawn().unwrap();
 
         (
             Shared {
                 transfer,
                 adc_value: 0,
                 sample_counter: Wrapping(0),
-                app_mode: AppMode::Start,
+                app_mode: AppMode::new(acc_idle_pin.erase()),
                 calibration_state: CalibrationState::Done(0),
-                measurement: Measurement::new(
-                    0,
-                    hw::TRIGGER_THRESHOLDS,
-                ),
+                measurement: Measurement::new(0, hw::TRIGGER_THRESHOLDS),
                 display,
                 #[cfg(feature = "usb")]
                 usb_devices: UsbDevices::make(usb_bus),
@@ -300,6 +327,7 @@ mod app {
                 beeper,
                 rotary,
                 measurement_button_last_pressed: Systick::now(),
+                acc_sense_pin: acc_sense_pin.erase(),
             },
         )
     }
@@ -321,15 +349,15 @@ mod app {
                     };
 
                     (&mut cx.shared.app_mode, &mut cx.shared.selected_menu_option).lock(
-                        |app_mode, selected_menu_option| match *app_mode {
-                            AppMode::Start
-                            | AppMode::Calibrating
-                            | AppMode::Measure
-                            | AppMode::Results
-                            | AppMode::Debug => {
-                                *app_mode = AppMode::Menu;
+                        |app_mode, selected_menu_option| match app_mode.get() {
+                            AppModeInner::Start
+                            | AppModeInner::Calibrating
+                            | AppModeInner::Measure
+                            | AppModeInner::Results
+                            | AppModeInner::Debug => {
+                                app_mode.set(AppModeInner::Menu);
                             }
-                            AppMode::Menu => {
+                            AppModeInner::Menu => {
                                 *selected_menu_option = (*selected_menu_option as isize
                                     + MenuScreen::options_len() as isize
                                     + d)
@@ -401,25 +429,24 @@ mod app {
             .shared
             .selected_menu_option
             .lock(|selected_menu_option| *selected_menu_option);
-        cx.shared.app_mode.lock(|app_mode| match *app_mode {
-            AppMode::Calibrating | AppMode::Measure | AppMode::Debug => {
-                *app_mode = AppMode::Start;
+        cx.shared.app_mode.lock(|app_mode| match app_mode.get() {
+            AppModeInner::Calibrating | AppModeInner::Measure | AppModeInner::Debug => {
+                app_mode.set(AppModeInner::Start);
             }
-            AppMode::Menu => match selected_option {
+            AppModeInner::Menu => match selected_option {
                 0 => {
                     let _ = measure_task::spawn();
                 }
                 1 => {
                     let _ = debug_task::spawn();
                 }
-                2 => {}
-                3 => {
-                    *app_mode = AppMode::Update;
+                2 => {
+                    app_mode.set(AppModeInner::Update);
                 }
                 _ => (),
             },
-            AppMode::Update | AppMode::None => (),
-            AppMode::Start | AppMode::Results => {
+            AppModeInner::Update | AppModeInner::None | AppModeInner::NoAccessory => (),
+            AppModeInner::Start | AppModeInner::Results => {
                 let _ = measure_task::spawn();
             }
         });
@@ -462,13 +489,37 @@ mod app {
             );
     }
 
+    #[task(shared=[app_mode], local=[acc_sense_pin], priority=2)]
+    async fn acc_sense_task(mut cx: acc_sense_task::Context) {
+        let mut last_state = cx.local.acc_sense_pin.is_high();
+        // TODO use adc
+        loop {
+            let state = cx.local.acc_sense_pin.is_high();
+            Systick::delay(250.millis()).await;
+
+            if state != last_state {
+                last_state = state;
+
+                if !state {
+                    cx.shared.app_mode.lock(|app_mode| {
+                        app_mode.set(AppModeInner::NoAccessory);
+                    });
+                } else {
+                    cx.shared.app_mode.lock(|app_mode| {
+                        app_mode.set(AppModeInner::Start);
+                    });
+                }
+            }
+        }
+    }
+
     #[task(shared=[app_mode, adc_value, calibration_state, measurement, beep_sender, usb_devices], priority=2)]
     async fn measure_task(mut cx: measure_task::Context) {
         #[cfg(feature = "usb")]
         let mut usb_devices = cx.shared.usb_devices;
 
         cx.shared.app_mode.lock(|app_mode| {
-            *app_mode = AppMode::Calibrating;
+            app_mode.set(AppModeInner::Calibrating);
         });
 
         // Let the system settle a bit
@@ -494,18 +545,15 @@ mod app {
         }
 
         cx.shared.measurement.lock(|measurement| {
-            *measurement = Measurement::new(
-                calibration_value,
-                hw::TRIGGER_THRESHOLDS,
-            );
+            *measurement = Measurement::new(calibration_value, hw::TRIGGER_THRESHOLDS);
         });
 
         cx.shared.app_mode.lock(|app_mode| {
-            *app_mode = AppMode::Measure;
+            app_mode.set(AppModeInner::Measure);
         });
 
         loop {
-            if cx.shared.app_mode.lock(|app_mode| *app_mode) != AppMode::Measure {
+            if cx.shared.app_mode.lock(|app_mode| app_mode.get()) != AppModeInner::Measure {
                 // Cancelled
                 return;
             }
@@ -540,7 +588,12 @@ mod app {
                 serial_log!(usb_devices, s.as_bytes());
 
                 let mut s = String::<128>::default();
-                uwrite!(s, "Sample rate at the end: 1/{}\r\n", result.sample_rate.divisor()).unwrap();
+                uwrite!(
+                    s,
+                    "Sample rate at the end: 1/{}\r\n",
+                    result.sample_rate.divisor()
+                )
+                .unwrap();
                 serial_log!(usb_devices, s.as_bytes());
 
                 let mut s = String::<128>::default();
@@ -574,14 +627,14 @@ mod app {
             let _ = beep_sender.try_send(Chirp::Done);
         });
         cx.shared.app_mode.lock(|app_mode| {
-            *app_mode = AppMode::Results;
+            app_mode.set(AppModeInner::Results);
         });
     }
 
     #[task(shared=[app_mode, calibration_state], priority=2)]
     async fn debug_task(mut cx: debug_task::Context) {
         cx.shared.app_mode.lock(|app_mode| {
-            *app_mode = AppMode::Calibrating;
+            app_mode.set(AppModeInner::Calibrating);
         });
         cx.shared.calibration_state.lock(|calibration_state| {
             calibration_state.begin();
@@ -590,7 +643,7 @@ mod app {
         Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
 
         cx.shared.app_mode.lock(|app_mode| {
-            *app_mode = AppMode::Debug;
+            app_mode.set(AppModeInner::Debug);
         });
     }
 
@@ -642,28 +695,28 @@ mod app {
             let _ = beep_sender.try_send(Chirp::Startup);
         });
 
-        let mut mode = AppMode::None;
+        let mut mode = AppModeInner::None;
         let mut screen: Screens<DisplayType, MipidsiError> = StartScreen::default().into();
 
         loop {
             if let Some(changed_mode) = cx.shared.app_mode.lock(|app_mode| {
-                if *app_mode != mode {
-                    mode = *app_mode;
+                if app_mode.get() != mode {
+                    mode = app_mode.get();
                     return Some(mode);
                 }
                 None
             }) {
                 match changed_mode {
-                    AppMode::Start => {
+                    AppModeInner::Start => {
                         screen = Screens::Start(StartScreen::default());
                     }
-                    AppMode::Calibrating => {
+                    AppModeInner::Calibrating => {
                         screen = Screens::Calibration(CalibrationScreen::default());
                     }
-                    AppMode::Measure => {
+                    AppModeInner::Measure => {
                         screen = Screens::Measurement(MeasurementScreen::default());
                     }
-                    AppMode::Debug => {
+                    AppModeInner::Debug => {
                         screen = Screens::Debug(DebugScreen::new(
                             cx.shared.calibration_state.lock(core::mem::take).finish(),
                             hw::TRIGGER_THRESHOLDS,
@@ -675,7 +728,7 @@ mod app {
                             },
                         ));
                     }
-                    AppMode::Results => {
+                    AppModeInner::Results => {
                         let calibration = cx.shared.calibration_state.lock(core::mem::take);
                         let result = cx
                             .shared
@@ -683,23 +736,23 @@ mod app {
                             .lock(|m| {
                                 core::mem::replace(
                                     m,
-                                    Measurement::new(
-                                        Default::default(),
-                                        hw::TRIGGER_THRESHOLDS,
-                                    ),
+                                    Measurement::new(Default::default(), hw::TRIGGER_THRESHOLDS),
                                 )
                             })
                             .take_result()
                             .unwrap();
                         screen = Screens::Results(ResultsScreen::new(calibration, result));
                     }
-                    AppMode::Update => {
+                    AppModeInner::Update => {
                         screen = Screens::Update(UpdateScreen::default());
                     }
-                    AppMode::Menu => {
+                    AppModeInner::Menu => {
                         screen = Screens::Menu(MenuScreen::default());
                     }
-                    AppMode::None => (),
+                    AppModeInner::NoAccessory => {
+                        screen = Screens::NoAccessory(NoAccessoryScreen::default());
+                    }
+                    AppModeInner::None => (),
                 };
                 screen.draw_init(display).await;
             }
@@ -719,7 +772,16 @@ mod app {
                 _ => (),
             }
 
-            screen.draw_frame(display).await;
+            screen
+                .draw_frame(
+                    display,
+                    DrawFrameContext {
+                        animation_time_ms: (Systick::now()
+                            - <Systick as rtic_monotonics::Monotonic>::ZERO)
+                            .to_millis(),
+                    },
+                )
+                .await;
             display.step_fx();
 
             #[allow(clippy::single_match)]
@@ -729,8 +791,8 @@ mod app {
             }
 
             let delay = match mode {
-                AppMode::Debug => 5.millis(),
-                AppMode::Calibrating | AppMode::Measure => 500.millis(),
+                AppModeInner::Debug => 5.millis(),
+                AppModeInner::Calibrating | AppModeInner::Measure => 500.millis(),
                 _ => 25.millis(),
             };
             Systick::delay(delay).await;

@@ -251,7 +251,7 @@ pin_macro!($ usb_dp_pin, a, pa12);
 pin_macro!($ rotary_dt_pin, c, pc15);
 pin_macro!($ rotary_clk_pin, c, pc14);
 
-pin_macro!($ accessory_sense_pin, a, pa3);
+pin_macro!($ accessory_sense_pin, a, pa0);
 pin_macro!($ accessory_idle_signal, b, pb8);
 
 use app_measurements::TriggerThresholds;

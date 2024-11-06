@@ -8,7 +8,7 @@ use rtic_monotonics::systick::Systick;
 #[cfg(feature = "cortex-m")]
 use rtic_monotonics::Monotonic;
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::{draw_badge, AppDrawTarget};
 
 pub struct MeasurementScreen<DT, E> {
@@ -40,11 +40,8 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MeasurementScreen<DT, E> 
             .unwrap();
     }
 
-    async fn draw_frame(&mut self, display: &mut DT) {
-        #[cfg(feature = "cortex-m")]
-        let t = (Systick::now() - <Systick as rtic_monotonics::Monotonic>::ZERO).to_secs();
-        #[cfg(not(feature = "cortex-m"))]
-        let t = 0;
+    async fn draw_frame(&mut self, display: &mut DT, cx: DrawFrameContext) {
+        let t = cx.animation_time_ms / 1000;
 
         let offsets = -1i32..2;
         let len = offsets.len() as u32;

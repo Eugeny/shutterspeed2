@@ -8,7 +8,7 @@ use fugit::ExtU32;
 #[cfg(feature = "cortex-m")]
 use rtic_monotonics::systick::Systick;
 
-use super::Screen;
+use super::{DrawFrameContext, Screen};
 use crate::primitives::Cross;
 use crate::{draw_badge, AppDrawTarget};
 
@@ -58,7 +58,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for BootScreen<DT, E> {
         tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
     }
 
-    async fn draw_frame(&mut self, _display: &mut DT) {}
+    async fn draw_frame(&mut self, _display: &mut DT, _cx: DrawFrameContext) {}
 }
 
 impl<DT: AppDrawTarget<E>, E: Debug> Default for BootScreen<DT, E> {
