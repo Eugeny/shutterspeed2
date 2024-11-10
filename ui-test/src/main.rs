@@ -2,10 +2,13 @@ use std::f32::consts::PI;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use app_measurements::{CalibrationState, MeasurementResult, SamplingRate, TriggerThresholds};
+use app_measurements::{
+    CalibrationResult, CalibrationState, MeasurementResult, SamplingRate, TriggerThresholds,
+};
 use app_ui::panic::draw_panic_screen;
 use app_ui::{
-    BootScreen, CalibrationScreen, DebugScreen, DrawFrameContext, HintRefresh, MeasurementScreen, MenuScreen, NoAccessoryScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen
+    BootScreen, CalibrationScreen, DebugScreen, DrawFrameContext, HintRefresh, MeasurementScreen,
+    MenuScreen, NoAccessoryScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen,
 };
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{OriginDimensions, Size};
@@ -128,7 +131,11 @@ async fn main() {
                                 sample_buffer.write(baseline);
                             }
                             screen = ResultsScreen::new(
-                                CalibrationState::Done(128),
+                                CalibrationState::Done(CalibrationResult {
+                                    average: 128,
+                                    max: 160,
+                                    min: 80,
+                                }),
                                 MeasurementResult {
                                     duration_micros: 125,
                                     integrated_duration_micros: 1000000 / 120,
@@ -154,7 +161,11 @@ async fn main() {
                         }
                         Keycode::I => {
                             let mut ds = DebugScreen::new(
-                                50,
+                                CalibrationResult {
+                                    average: 128,
+                                    max: 160,
+                                    min: 80,
+                                },
                                 TriggerThresholds {
                                     high_ratio: 1.2,
                                     low_ratio: 1.5,
@@ -210,6 +221,9 @@ async fn main() {
         match screen {
             Screens::Debug(ref mut screen) => {
                 screen.step(screen.last_adc_value());
+            }
+            Screens::Calibration(ref mut screen) => {
+                screen.step(Some((t_start.elapsed().as_millis() / 10 % 100) as u8));
             }
             _ => (),
         }

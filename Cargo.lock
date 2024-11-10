@@ -87,6 +87,7 @@ dependencies = [
  "heapless 0.8.0",
  "micromath",
  "rtic-monotonics",
+ "tinybmp",
  "tokio",
  "u8g2-fonts",
  "ufmt",
@@ -1245,6 +1246,15 @@ name = "time-core"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
+
+[[package]]
+name = "tinybmp"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df43af2cb7b369009aa14144959bb4f2720ab62034c9073242f2d3a186c2edb6"
+dependencies = [
+ "embedded-graphics",
+]
 
 [[package]]
 name = "tokio"

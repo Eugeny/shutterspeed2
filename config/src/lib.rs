@@ -15,8 +15,8 @@ pub const CALIBRATION_TIME_MS: u32 = 1000;
 pub const TRIGGER_THRESHOLDS: TriggerThresholds = TriggerThresholds {
     low_ratio: 1.0,
     high_ratio: 1.0,
-    low_delta: ADC_RANGE / 16u16,
-    high_delta: ADC_RANGE / 8u16,
+    low_delta: ADC_RANGE / 32u16,
+    high_delta: ADC_RANGE / 16u16,
 };
 
 // pub const TRIGGER_THRESHOLDS: TriggerThresholds = TriggerThresholds {

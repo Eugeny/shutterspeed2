@@ -41,7 +41,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for MenuScreen<DT, E> {
             .unwrap();
     }
 
-    async fn draw_frame(&mut self, display: &mut DT, cx: DrawFrameContext) {
+    async fn draw_frame(&mut self, display: &mut DT, _cx: DrawFrameContext) {
         let bg = config::COLOR_BACKGROUND;
         let fg = config::COLOR_RESULT_VALUE;
 

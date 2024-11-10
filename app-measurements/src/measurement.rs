@@ -1,78 +1,9 @@
 use heapless::HistoryBuffer;
 use infinity_sampler::{SamplingOutcome, SamplingRate, SamplingReservoir};
 
+use crate::calibration::TriggerThresholds;
 use crate::util::{HistoryBufferDoubleEndedIterator, LaxDuration, LaxMonotonic};
-
-#[derive(Clone, Debug, Copy)]
-pub struct TriggerThresholds {
-    pub low_ratio: f32,
-    pub high_ratio: f32,
-    pub low_delta: u16,
-    pub high_delta: u16,
-}
-
-impl TriggerThresholds {
-    pub fn trigger_low(&self, calibration_value: u16) -> u16 {
-        ((calibration_value as f32 * self.low_ratio) + self.low_delta as f32) as u16
-    }
-
-    pub fn trigger_high(&self, calibration_value: u16) -> u16 {
-        ((calibration_value as f32 * self.high_ratio) + self.high_delta as f32) as u16
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Calibration {
-    sum: u64,
-    count: u32,
-}
-
-#[derive(Clone, Debug)]
-pub enum CalibrationState {
-    Done(u16),
-    InProgress(Calibration),
-}
-
-impl Calibration {
-    fn new() -> Self {
-        Self { sum: 0, count: 0 }
-    }
-
-    pub fn add(&mut self, value: u16) {
-        self.sum += value as u64;
-        self.count += 1;
-    }
-
-    fn finish(&self) -> u16 {
-        if self.count == 0 {
-            return 0;
-        }
-        (self.sum / self.count as u64) as u16
-    }
-}
-
-impl CalibrationState {
-    pub fn begin(&mut self) {
-        *self = CalibrationState::InProgress(Calibration::new());
-    }
-
-    pub fn finish(&mut self) -> u16 {
-        match *self {
-            CalibrationState::InProgress(ref calibration) => {
-                let value = calibration.finish();
-                *self = CalibrationState::Done(value);
-                value
-            }
-            CalibrationState::Done(value) => value,
-        }
-    }
-}
-
-impl Default for CalibrationState {
-    fn default() -> Self {
-        Self::Done(0)
-    }
-}
+use crate::CalibrationResult;
 
 const MARGIN_SAMPLES: usize = 100;
 pub const SAMPLING_BUFFER_LEN: usize = 512;
@@ -171,18 +102,14 @@ pub enum MeasurementState<M: LaxMonotonic> {
 }
 
 impl<M: LaxMonotonic> Measurement<M> {
-    pub fn new(calibration_value: u16, trigger_thresholds: TriggerThresholds) -> Self {
+    pub fn new(calibration: CalibrationResult, trigger_thresholds: TriggerThresholds) -> Self {
         Self {
             head_buffer: HistoryBuffer::new(),
             tail_buffer: HistoryBuffer::new(),
             sampling_buffer: SamplingReservoir::new(),
             state: MeasurementState::Idle {
-                trigger_low: trigger_thresholds
-                    .trigger_low(calibration_value)
-                    .max(calibration_value + 5),
-                trigger_high: trigger_thresholds
-                    .trigger_high(calibration_value)
-                    .max(calibration_value + 10),
+                trigger_low: trigger_thresholds.trigger_low(&calibration),
+                trigger_high: trigger_thresholds.trigger_high(&calibration),
             },
         }
     }
@@ -281,8 +208,8 @@ impl<M: LaxMonotonic> Measurement<M> {
                         integrated_value_samples / (*peak - *trigger_low) as u64;
 
                     let duration_micros = (t_end - *since).to_micros();
-                    let integrated_duration_micros =
-                        integrated_duration_samples * duration_micros / *samples_since_trigger as u64;
+                    let integrated_duration_micros = integrated_duration_samples * duration_micros
+                        / *samples_since_trigger as u64;
 
                     self.state = MeasurementState::Trailing {
                         duration_micros,

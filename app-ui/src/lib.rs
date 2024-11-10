@@ -11,6 +11,7 @@ mod fx;
 pub mod panic;
 mod primitives;
 mod screens;
+mod util;
 
 pub use elements::*;
 pub use screens::{

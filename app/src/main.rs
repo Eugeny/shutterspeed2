@@ -8,8 +8,12 @@ mod display;
 mod panic;
 mod sound;
 
+extern "C" {
+    static mut HEAP: u32;
+}
+
 // HWCONFIG
-#[rtic::app(device = hal::pac, dispatchers = [SPI2, SPI3, SPI4])]
+#[rtic::app(device = hal::pac, dispatchers = [SPI2, SPI3, SPI4, I2C1_EV])]
 mod app {
     use core::cell::UnsafeCell;
     use core::num::Wrapping;
@@ -17,7 +21,7 @@ mod app {
     #[cfg(feature = "usb")]
     use core::ptr::addr_of_mut;
 
-    use app_measurements::{CalibrationState, CycleCounterClock, Measurement};
+    use app_measurements::{CalibrationResult, CalibrationState, CycleCounterClock, Measurement};
     use app_ui::{
         BootScreen, CalibrationScreen, DebugScreen, DrawFrameContext, MeasurementScreen,
         MenuScreen, NoAccessoryScreen, ResultsScreen, Screen, Screens, StartScreen, UpdateScreen,
@@ -31,10 +35,13 @@ mod app {
     use fugit::ExtU32;
     use hal::adc::config::Resolution;
     use hal::gpio::{Edge, ErasedPin, Input, Output};
-    use hal::otg_fs::{UsbBus, UsbBusType, USB};
+    #[cfg(feature = "usb")]
+    use hal::otg_fs::UsbBusType;
+    use hal::otg_fs::{UsbBus, USB};
     use hal::pac;
     use hal::prelude::*;
     use hal::timer::Flag;
+    #[cfg(feature = "usb")]
     use heapless::String;
     use mipidsi::error::Error as MipidsiError;
     use ouroboros::self_referencing;
@@ -44,10 +51,14 @@ mod app {
     use rtic_monotonics::{create_systick_token, Monotonic};
     use rtic_sync::channel::{Receiver, Sender};
     use rtic_sync::make_channel;
+    #[cfg(feature = "usb")]
     use stm32f4xx_hal::pac::Interrupt;
+    #[cfg(feature = "usb")]
     use ufmt::uwrite;
     use usb_device::class_prelude::UsbBusAllocator;
-    use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidPid};
+    use usb_device::device::UsbDevice;
+    #[cfg(feature = "usb")]
+    use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};
     use usbd_serial::SerialPort;
 
     use crate::display::Display;
@@ -168,6 +179,7 @@ mod app {
         sample_counter: Wrapping<u32>,
         app_mode: AppMode,
         calibration_state: CalibrationState,
+        calibration_result: Option<CalibrationResult>,
         measurement: Measurement<CycleCounterClock<{ hw::SYSCLK }>>,
         display: UnsafeCell<DisplayType>,
         beep_sender: Sender<'static, Chirp, 1>,
@@ -185,6 +197,10 @@ mod app {
         rotary: RotaryEncoder<StandardMode, ErasedPin<Input>, ErasedPin<Input>>,
         measurement_button_last_pressed: <Systick as Monotonic>::Instant,
         acc_sense_pin: ErasedPin<Input>,
+        debug_calibration_channel_sender: Sender<'static, CalibrationResult, 1>,
+        debug_calibration_channel_receiver: Receiver<'static, CalibrationResult, 1>,
+        measurement_calibration_channel_sender: Sender<'static, CalibrationResult, 1>,
+        measurement_calibration_channel_receiver: Receiver<'static, CalibrationResult, 1>,
     }
 
     #[cfg(feature = "usb")]
@@ -196,10 +212,8 @@ mod app {
     #[init(local = [first_buffer: u16 = 0, _adc_dma_buffer: u16 = 0])]
     fn init(mut cx: init::Context) -> (Shared, Local) {
         {
-            use core::mem::MaybeUninit;
             const HEAP_SIZE: usize = 1024;
-            static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-            unsafe { HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
+            // unsafe { HEAP.init(super::HEAP as usize, HEAP_SIZE) }
         }
 
         let mut dp: pac::Peripherals = cx.device;
@@ -303,14 +317,20 @@ mod app {
         display_task::spawn().unwrap();
         acc_sense_task::spawn().unwrap();
 
+        let (debug_calibration_channel_sender, debug_calibration_channel_receiver) =
+            make_channel!(CalibrationResult, 1);
+        let (measurement_calibration_channel_sender, measurement_calibration_channel_receiver) =
+            make_channel!(CalibrationResult, 1);
+
         (
             Shared {
                 transfer,
                 adc_value: 0,
                 sample_counter: Wrapping(0),
                 app_mode: AppMode::new(acc_idle_pin.erase()),
-                calibration_state: CalibrationState::Done(0),
-                measurement: Measurement::new(0, hw::TRIGGER_THRESHOLDS),
+                calibration_state: CalibrationState::default(),
+                calibration_result: None,
+                measurement: Measurement::new(CalibrationResult::default(), hw::TRIGGER_THRESHOLDS),
                 display,
                 #[cfg(feature = "usb")]
                 usb_devices: UsbDevices::make(usb_bus),
@@ -328,6 +348,10 @@ mod app {
                 rotary,
                 measurement_button_last_pressed: Systick::now(),
                 acc_sense_pin: acc_sense_pin.erase(),
+                debug_calibration_channel_sender,
+                debug_calibration_channel_receiver,
+                measurement_calibration_channel_sender,
+                measurement_calibration_channel_receiver,
             },
         )
     }
@@ -478,8 +502,8 @@ mod app {
         )
             .lock(
                 |adc_value, calibration_state, measurement, sample_counter| {
-                    if let CalibrationState::InProgress(ref mut calibration) = calibration_state {
-                        calibration.add(value)
+                    if let CalibrationState::InProgress { .. } = calibration_state {
+                        calibration_state.step(value)
                     } else {
                         measurement.step(value);
                     }
@@ -497,14 +521,16 @@ mod app {
             let state = cx.local.acc_sense_pin.is_high();
             Systick::delay(250.millis()).await;
 
+            if !state {
+                cx.shared.app_mode.lock(|app_mode| {
+                    app_mode.set(AppModeInner::NoAccessory);
+                });
+            }
+
             if state != last_state {
                 last_state = state;
 
-                if !state {
-                    cx.shared.app_mode.lock(|app_mode| {
-                        app_mode.set(AppModeInner::NoAccessory);
-                    });
-                } else {
+                if state {
                     cx.shared.app_mode.lock(|app_mode| {
                         app_mode.set(AppModeInner::Start);
                     });
@@ -513,10 +539,12 @@ mod app {
         }
     }
 
-    #[task(shared=[app_mode, adc_value, calibration_state, measurement, beep_sender, usb_devices], priority=2)]
-    async fn measure_task(mut cx: measure_task::Context) {
-        #[cfg(feature = "usb")]
-        let mut usb_devices = cx.shared.usb_devices;
+    #[task(shared = [app_mode, calibration_result, calibration_state], priority = 3)]
+    async fn calibration_task(
+        mut cx: calibration_task::Context,
+        mut sender: Sender<'static, CalibrationResult, 1>,
+    ) {
+        cx.shared.calibration_result.lock(|r| *r = None);
 
         cx.shared.app_mode.lock(|app_mode| {
             app_mode.set(AppModeInner::Calibrating);
@@ -529,23 +557,50 @@ mod app {
             calibration_state.begin();
         });
 
-        Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
+        let calibration_result = loop {
+            Systick::delay(100.millis()).await;
+            let result = cx.shared.calibration_state.lock(|state| match state {
+                CalibrationState::InProgress { .. } => None,
+                CalibrationState::Done(result) => Some(result.clone()),
+            });
+            if let Some(result) = result {
+                break result;
+            }
+        };
+
+        sender.send(calibration_result).await.unwrap();
+    }
+
+    #[task(
+        shared=[app_mode, adc_value, measurement, beep_sender, usb_devices],
+        local=[measurement_calibration_channel_receiver, measurement_calibration_channel_sender],
+        priority=2,
+    )]
+    async fn measure_task(mut cx: measure_task::Context) {
+        #[cfg(feature = "usb")]
+        let mut usb_devices = cx.shared.usb_devices;
+
+        calibration_task::spawn(cx.local.measurement_calibration_channel_sender.clone()).unwrap();
+        let result = cx
+            .local
+            .measurement_calibration_channel_receiver
+            .recv()
+            .await
+            .unwrap();
 
         cx.shared.beep_sender.lock(|beep_sender| {
             let _ = beep_sender.try_send(Chirp::Measuring);
         });
 
-        let calibration_value = cx.shared.calibration_state.lock(|state| state.finish());
-
         #[cfg(feature = "usb")]
         {
             let mut s = String::<128>::default();
-            uwrite!(s, "Calibrated to: {}\r\n", calibration_value).unwrap();
+            uwrite!(s, "Calibrated to: {}\r\n", result).unwrap();
             serial_log!(usb_devices, s.as_bytes());
         }
 
         cx.shared.measurement.lock(|measurement| {
-            *measurement = Measurement::new(calibration_value, hw::TRIGGER_THRESHOLDS);
+            *measurement = Measurement::new(result, hw::TRIGGER_THRESHOLDS);
         });
 
         cx.shared.app_mode.lock(|app_mode| {
@@ -631,16 +686,23 @@ mod app {
         });
     }
 
-    #[task(shared=[app_mode, calibration_state], priority=2)]
+    #[task(
+        shared=[app_mode, calibration_result],
+        local=[debug_calibration_channel_sender, debug_calibration_channel_receiver],
+        priority=2
+    )]
     async fn debug_task(mut cx: debug_task::Context) {
-        cx.shared.app_mode.lock(|app_mode| {
-            app_mode.set(AppModeInner::Calibrating);
-        });
-        cx.shared.calibration_state.lock(|calibration_state| {
-            calibration_state.begin();
-        });
+        calibration_task::spawn(cx.local.debug_calibration_channel_sender.clone()).unwrap();
+        let result = cx
+            .local
+            .debug_calibration_channel_receiver
+            .recv()
+            .await
+            .unwrap();
 
-        Systick::delay(hw::CALIBRATION_TIME_MS.millis()).await;
+        cx.shared
+            .calibration_result
+            .lock(|calibration_result| *calibration_result = Some(result));
 
         cx.shared.app_mode.lock(|app_mode| {
             app_mode.set(AppModeInner::Debug);
@@ -662,10 +724,10 @@ mod app {
     }
 
     #[task(binds=OTG_FS, shared=[usb_devices])]
-    fn usb_interrupt(cx: usb_interrupt::Context) {
+    fn usb_interrupt(_cx: usb_interrupt::Context) {
         #[cfg(feature = "usb")]
         {
-            let mut usb = cx.shared.usb_devices;
+            let mut usb = _cx.shared.usb_devices;
             usb.lock(handle_usb_activity);
         }
     }
@@ -684,7 +746,7 @@ mod app {
         }
     }
 
-    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, measurement, display, beep_sender, selected_menu_option], priority=1)]
+    #[task(shared=[adc_value, sample_counter, app_mode, calibration_state, calibration_result, measurement, display, beep_sender, selected_menu_option], priority=1)]
     async fn display_task(mut cx: display_task::Context) {
         // Only shared with the panic handler, which never returns
         let display = unsafe { cx.shared.display.lock(|d| &mut *d.get()) };
@@ -718,7 +780,7 @@ mod app {
                     }
                     AppModeInner::Debug => {
                         screen = Screens::Debug(DebugScreen::new(
-                            cx.shared.calibration_state.lock(core::mem::take).finish(),
+                            cx.shared.calibration_result.lock(Option::take).unwrap(),
                             hw::TRIGGER_THRESHOLDS,
                             match hw::ADC_RESOLUTION {
                                 Resolution::Six => 63,
@@ -736,7 +798,7 @@ mod app {
                             .lock(|m| {
                                 core::mem::replace(
                                     m,
-                                    Measurement::new(Default::default(), hw::TRIGGER_THRESHOLDS),
+                                    Measurement::new(CalibrationResult::default(), hw::TRIGGER_THRESHOLDS),
                                 )
                             })
                             .take_result()
@@ -761,6 +823,10 @@ mod app {
                 Screens::Debug(ref mut screen) => {
                     let adc_value = cx.shared.adc_value.lock(|adc_value| *adc_value);
                     screen.step(adc_value);
+                }
+                Screens::Calibration(ref mut screen) => {
+                    let progress = cx.shared.calibration_state.lock(|c| c.progress());
+                    screen.step(progress);
                 }
                 Screens::Menu(ref mut screen) => {
                     let selected_menu_option = cx
@@ -791,8 +857,9 @@ mod app {
             }
 
             let delay = match mode {
-                AppModeInner::Debug => 5.millis(),
-                AppModeInner::Calibrating | AppModeInner::Measure => 500.millis(),
+                AppModeInner::Debug => 10.millis(),
+                AppModeInner::Calibrating => 10.millis(),
+                AppModeInner::Measure => 500.millis(),
                 _ => 25.millis(),
             };
             Systick::delay(delay).await;

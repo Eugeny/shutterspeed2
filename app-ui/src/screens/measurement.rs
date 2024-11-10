@@ -3,10 +3,6 @@ use core::fmt::Debug;
 use embedded_graphics::geometry::{Dimensions, Point, Size};
 use embedded_graphics::pixelcolor::{Rgb565, RgbColor};
 use embedded_graphics::primitives::Rectangle;
-#[cfg(feature = "cortex-m")]
-use rtic_monotonics::systick::Systick;
-#[cfg(feature = "cortex-m")]
-use rtic_monotonics::Monotonic;
 
 use super::{DrawFrameContext, Screen};
 use crate::{draw_badge, AppDrawTarget};

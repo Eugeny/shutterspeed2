@@ -11,7 +11,8 @@ MEMORY
 
   BOOTLOADER_RESERVED : ORIGIN = 0x00000000, LENGTH = 16K
   FLASH : ORIGIN = 0x00004000, LENGTH = 240K
-  RAM : ORIGIN = 0x20000000, LENGTH = 63K /* last KB left free for bootloader flags */
+  RAM : ORIGIN = 0x20000000, LENGTH = 62K /* 2 KB left free for heap and bootloader flags */
+  HEAP : ORIGIN = 0x2000F800, LENGTH = 1K
 }
 
 SECTIONS {
@@ -21,6 +22,11 @@ SECTIONS {
       /* . = 0x0FFFC; */
       LONG(0xBEEFDEAD)
    } > BOOTLOADER_RESERVED
+
+   .heap ORIGIN(HEAP) :
+   {
+      HEAP = ORIGIN(HEAP);
+   } > HEAP
 }
 
 INCLUDE ../../../../../../bootloader-api/link.x

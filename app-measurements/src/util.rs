@@ -150,9 +150,11 @@ pub fn get_closest_shutter_speed(duration: f32) -> f32 {
     best_match
 }
 
+#[allow(dead_code)]
 trait Abs {
     fn abs(&self) -> Self;
 }
+
 impl Abs for f32 {
     fn abs(&self) -> Self {
         if *self < 0.0 {

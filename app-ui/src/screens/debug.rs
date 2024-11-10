@@ -1,6 +1,6 @@
 use core::fmt::{Debug, Write};
 
-use app_measurements::TriggerThresholds;
+use app_measurements::{CalibrationResult, TriggerThresholds};
 use eg_seven_segment::SevenSegmentStyleBuilder;
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::geometry::{Point, Size};
@@ -21,7 +21,7 @@ use crate::{config as cfg, AppDrawTarget};
 pub struct DebugScreen<DT, E> {
     adc_history: HistoryBuffer<u16, 1000>,
     is_triggered: bool,
-    calibration: u16,
+    calibration: CalibrationResult,
     threshold_low: u16,
     threshold_high: u16,
     max_value: u16,
@@ -33,7 +33,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
         display.clear(Rgb565::BLACK).unwrap();
     }
 
-    async fn draw_frame(&mut self, display: &mut DT, cx: DrawFrameContext) {
+    async fn draw_frame(&mut self, display: &mut DT, _cx: DrawFrameContext) {
         let recent_samples = self.adc_history.len().min(10);
         let (avg_adc_value, min_adc_value, max_adc_value) = {
             let recent_iter = || {
@@ -65,7 +65,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
             display,
             calibration_origin,
             " CALIBRATED TO ",
-            self.calibration,
+            self.calibration.average,
             cfg::COLOR_CALIBRATION,
         );
 
@@ -129,13 +129,13 @@ impl<DT: AppDrawTarget<E>, E: Debug> Screen<DT, E> for DebugScreen<DT, E> {
 }
 
 impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
-    pub fn new(calibration: u16, trigger_thresholds: TriggerThresholds, max_value: u16) -> Self {
+    pub fn new(calibration: CalibrationResult, trigger_thresholds: TriggerThresholds, max_value: u16) -> Self {
         Self {
             adc_history: HistoryBuffer::new(),
             is_triggered: false,
+            threshold_low: trigger_thresholds.trigger_low(&calibration),
+            threshold_high: trigger_thresholds.trigger_high(&calibration),
             calibration,
-            threshold_low: trigger_thresholds.trigger_low(calibration),
-            threshold_high: trigger_thresholds.trigger_high(calibration),
             max_value,
             _phantom: core::marker::PhantomData,
         }
@@ -182,7 +182,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
             .build();
 
         s.clear();
-        let rel_value = avg_adc_values as i32 - self.calibration as i32;
+        let rel_value = avg_adc_values as i32 - self.calibration.average as i32;
         if rel_value >= 0 {
             write!(s, " {:>4}", rel_value).unwrap();
         } else {
@@ -284,7 +284,7 @@ impl<DT: AppDrawTarget<E>, E: Debug> DebugScreen<DT, E> {
         }
 
         Pointer::new(
-            Point::new(scale_value(self.calibration), bar_h as i32 + 13),
+            Point::new(scale_value(self.calibration.average), bar_h as i32 + 13),
             5,
             true,
             cfg::COLOR_CALIBRATION,
